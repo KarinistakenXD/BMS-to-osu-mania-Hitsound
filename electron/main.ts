@@ -12,12 +12,19 @@ import { NodeFileSource } from "../src/core/node-io";
 
 let win: BrowserWindow | null = null;
 
+function appIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "icon.ico")
+    : path.join(app.getAppPath(), "build", "icon.ico");
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1120,
     height: 860,
     minWidth: 900,
     minHeight: 700,
+    icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -26,6 +33,11 @@ function createWindow(): void {
     },
   });
   win.loadFile(path.join(__dirname, "../../dist/index.html"));
+  win.webContents.once("did-finish-load", () => {
+    setTimeout(() => {
+      void promptForFfmpeg("audio conversion and pitch-preserving slow preview");
+    }, 600);
+  });
 }
 
 app.whenReady().then(createWindow);
@@ -283,9 +295,14 @@ async function resolveFfmpeg(): Promise<string | null> {
   const names = process.platform === "win32" ? ["ffmpeg.exe", "ffmpeg"] : ["ffmpeg", "ffmpeg.exe"];
   const candidates: string[] = [];
   if (envPath) candidates.push(envPath);
+  const localAppData = process.env.LOCALAPPDATA;
   for (const name of names) {
     candidates.push(path.join(process.resourcesPath, name));
     candidates.push(path.join(app.getAppPath(), name));
+    // winget creates command links here. Probe the absolute location so Retry
+    // can succeed even when this already-running process has not picked up a
+    // newly modified PATH yet.
+    if (localAppData) candidates.push(path.join(localAppData, "Microsoft", "WinGet", "Links", name));
   }
   for (const candidate of candidates) {
     try {
@@ -301,34 +318,30 @@ ipcMain.handle("tools:ffmpegStatus", async () => {
   return { available: !!executable, executable };
 });
 
-const WINGET_FFMPEG_COMMAND = "winget install --id Gyan.FFmpeg -e";
+const WINGET_FFMPEG_COMMAND = "winget install --id Gyan.FFmpeg -e --source winget";
 
-ipcMain.handle("tools:ensureFfmpeg", async (_e, reason?: string) => {
-  const existing = await resolveFfmpeg();
-  if (existing) return { available: true, executable: existing, command: WINGET_FFMPEG_COMMAND };
-
-  if (!win) return { available: false, executable: null, command: WINGET_FFMPEG_COMMAND };
-
-  const detail = [
-    reason?.trim() || "This feature requires FFmpeg.",
-    "",
-    "Install FFmpeg on Windows with:",
-    WINGET_FFMPEG_COMMAND,
-    "",
-    "After installation finishes, return here and press Retry. If Windows still cannot find FFmpeg, restart the app once so the updated PATH is picked up.",
-  ].join("\n");
+async function promptForFfmpeg(
+  reason = "this feature",
+): Promise<{ available: boolean; executable: string | null; command: string; copied?: boolean }> {
+  let executable = await resolveFfmpeg();
+  if (executable) {
+    return { available: true, executable, command: WINGET_FFMPEG_COMMAND };
+  }
+  if (!win) {
+    return { available: false, executable: null, command: WINGET_FFMPEG_COMMAND };
+  }
 
   for (;;) {
-    const buttons = process.platform === "win32"
-      ? ["Copy winget command", "Retry", "Cancel"]
-      : ["Copy install command", "Retry", "Cancel"];
     const result = await dialog.showMessageBox(win, {
       type: "warning",
-      title: "FFmpeg required",
-      message: "FFmpeg is required for this feature",
-      detail,
-      buttons,
-      defaultId: 0,
+      title: "FFmpeg is required",
+      message: `FFmpeg is required for ${reason}.`,
+      detail:
+        "Install FFmpeg with Windows Package Manager, then click Retry.\n\n" +
+        WINGET_FFMPEG_COMMAND +
+        "\n\nYou can also set FFMPEG_PATH or place ffmpeg.exe beside the installed app.",
+      buttons: ["Copy winget command", "Retry", "Not now"],
+      defaultId: 1,
       cancelId: 2,
       noLink: true,
     });
@@ -336,20 +349,38 @@ ipcMain.handle("tools:ensureFfmpeg", async (_e, reason?: string) => {
     if (result.response === 0) {
       clipboard.writeText(WINGET_FFMPEG_COMMAND);
       log(`[INFO] Copied FFmpeg install command: ${WINGET_FFMPEG_COMMAND}`);
-      return { available: false, executable: null, command: WINGET_FFMPEG_COMMAND, copied: true };
-    }
-    if (result.response === 2) {
-      return { available: false, executable: null, command: WINGET_FFMPEG_COMMAND, copied: false };
+      await dialog.showMessageBox(win, {
+        type: "info",
+        title: "Command copied",
+        message: "The FFmpeg winget command was copied to your clipboard.",
+        detail:
+          "Paste it into Windows Terminal or PowerShell, wait for installation to finish, then click Retry or use the feature again.",
+        buttons: ["OK"],
+      });
+      return {
+        available: false,
+        executable: null,
+        command: WINGET_FFMPEG_COMMAND,
+        copied: true,
+      };
     }
 
-    const retry = await resolveFfmpeg();
-    if (retry) {
-      log(`[INFO] FFmpeg detected: ${retry}`);
-      return { available: true, executable: retry, command: WINGET_FFMPEG_COMMAND };
+    if (result.response === 1) {
+      executable = await resolveFfmpeg();
+      if (executable) {
+        log(`[INFO] FFmpeg detected: ${executable}`);
+        return { available: true, executable, command: WINGET_FFMPEG_COMMAND };
+      }
+      continue;
     }
+
+    return { available: false, executable: null, command: WINGET_FFMPEG_COMMAND };
   }
-});
+}
 
+ipcMain.handle("tools:ensureFfmpeg", async (_e, reason?: string) => {
+  return promptForFfmpeg(reason || "audio conversion and pitch-preserving slow preview");
+});
 
 function atempoChain(rate: number): string {
   let r = Math.max(0.05, Math.min(4, Number(rate) || 1));
@@ -368,8 +399,11 @@ function atempoChain(rate: number): string {
  * the same tempo ratio keeps them aligned at non-1x preview rates.
  */
 ipcMain.handle("preview:tempoAudio", async (_e, { wavBytes, rate }: { wavBytes: Uint8Array; rate: number }) => {
-  const executable = await resolveFfmpeg();
-  if (!executable) return { ok: false, error: "FFmpeg is required for pitch-preserved slow preview." };
+  let executable = await resolveFfmpeg();
+  if (!executable) executable = (await promptForFfmpeg("pitch-preserving slow preview")).executable;
+  if (!executable) {
+    return { ok: false, error: `FFmpeg is required. Install it with: ${WINGET_FFMPEG_COMMAND}` };
+  }
   const safeRate = Math.max(0.25, Math.min(2, Number(rate) || 1));
   if (Math.abs(safeRate - 1) < 1e-6) return { ok: true, bytes: wavBytes };
 
@@ -400,8 +434,11 @@ ipcMain.handle("preview:tempoAudio", async (_e, { wavBytes, rate }: { wavBytes: 
  * This is the important alignment path: one tempo transform means both layers
  * receive exactly the same time warp instead of two content-dependent stretches. */
 ipcMain.handle("preview:tempoPair", async (_e, { targetWavBytes, hitsoundWavBytes, rate }: { targetWavBytes: Uint8Array; hitsoundWavBytes: Uint8Array; rate: number }) => {
-  const executable = await resolveFfmpeg();
-  if (!executable) return { ok: false, error: "FFmpeg is required for aligned pitch-preserved slow preview." };
+  let executable = await resolveFfmpeg();
+  if (!executable) executable = (await promptForFfmpeg("aligned pitch-preserving slow preview")).executable;
+  if (!executable) {
+    return { ok: false, error: `FFmpeg is required. Install it with: ${WINGET_FFMPEG_COMMAND}` };
+  }
   const safeRate = Math.max(0.25, Math.min(2, Number(rate) || 1));
   const dir = await fs.mkdtemp(path.join(app.getPath("temp"), "bms2osu-tempo-pair-"));
   const target = path.join(dir, "target.wav");
@@ -469,9 +506,12 @@ ipcMain.handle("core:prepareSamples", async (_e, payload: {
     }
 
     const outDir = path.dirname(osuPath);
-    const ffmpeg = options.convertToOgg ? await resolveFfmpeg() : null;
+    let ffmpeg = options.convertToOgg ? await resolveFfmpeg() : null;
     if (options.convertToOgg && !ffmpeg) {
-      return { ok: false, error: "FFmpeg was not found. Install FFmpeg, add it to PATH, set FFMPEG_PATH, or place ffmpeg beside the packaged app." };
+      ffmpeg = (await promptForFfmpeg("OGG sample export")).executable;
+    }
+    if (options.convertToOgg && !ffmpeg) {
+      return { ok: false, error: `FFmpeg is required. Install it with: ${WINGET_FFMPEG_COMMAND}` };
     }
 
     const quality = Math.max(-1, Math.min(10, Number(options.oggQuality) || 3));
@@ -536,9 +576,15 @@ ipcMain.handle("core:prepareCompositeSamples", async (_e, payload: {
   const { osuPath, items, options } = payload;
   try {
     if (!items.length) return { ok: true, exported: 0, skipped: 0, filenames: {} as Record<string, string> };
-    const ffmpeg = await resolveFfmpeg();
+    let ffmpeg = await resolveFfmpeg();
     if (!ffmpeg) {
-      return { ok: false, error: "Some timestamps contain more simultaneous BMS samples than playable lanes. A composite keysound is required, and FFmpeg is needed to mix it without using storyboard samples." };
+      ffmpeg = (await promptForFfmpeg("mixing overflow keysounds into one playable composite sample")).executable;
+    }
+    if (!ffmpeg) {
+      return {
+        ok: false,
+        error: `A composite keysound is required and FFmpeg is missing. Install it with: ${WINGET_FFMPEG_COMMAND}`,
+      };
     }
 
     const outDir = path.dirname(osuPath);
