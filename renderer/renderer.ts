@@ -752,8 +752,10 @@ function drawPreviewNote(
   bottom: number,
   isBgm = false,
 ): void {
-  // Notes terminate exactly at the NOW line. There is no post-hit tail/fade.
-  if (note.timeMs < nowMs - .5 || note.timeMs > nowMs + horizonMs) return;
+  // A hold remains visible until its tail reaches NOW; taps end at their head.
+  const isHold = note.endTimeMs > note.timeMs + 1;
+  const visibleEndMs = isHold ? note.endTimeMs : note.timeMs;
+  if (visibleEndMs < nowMs - .5 || note.timeMs > nowMs + horizonMs) return;
   const keys = clamp(Math.max(1, sourceKeys), 1, MAX_OUTPUT_KEYS);
   const slotW = width / MAX_OUTPUT_KEYS;
   const playfieldW = slotW * keys;
@@ -762,9 +764,8 @@ function drawPreviewNote(
   const pad = Math.min(3, Math.max(1, laneW * .08));
   const x = playfieldLeft + note.lane * laneW + pad;
   const w = Math.max(2, laneW - pad * 2);
-  const yHead = noteY(note.timeMs, nowMs, horizonMs, pastMs, top, judgmentY, bottom);
+  const yHead = noteY(isHold ? Math.max(note.timeMs, nowMs) : note.timeMs, nowMs, horizonMs, pastMs, top, judgmentY, bottom);
   const yEnd = noteY(note.endTimeMs, nowMs, horizonMs, pastMs, top, judgmentY, bottom);
-  const isHold = note.endTimeMs > note.timeMs + 1;
   const leadMs = note.timeMs - nowMs;
 
   let glowColor = "rgba(255,102,171,.75)";
