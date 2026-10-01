@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   restore:
+    if: "!contains(github.event.head_commit.message, '[source-restored]')"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -24,7 +25,7 @@ jobs:
           echo "3a143e08accb02480170bfc49f678e09990ea9fde6db9623f92b1693a087a54d  /tmp/source.tar.xz" | sha256sum -c -
           mkdir -p /tmp/restored
           tar -xJf /tmp/source.tar.xz -C /tmp/restored
-          cp -a /tmp/restored/. .
+          rsync -a --exclude='.github/' /tmp/restored/ ./
 
           node - <<'NODE'
           const fs = require('fs');
@@ -39,10 +40,6 @@ jobs:
           NODE
 
           rm -rf bootstrap payload
-          rm -f .github/workflows/restore-once.yml
-          rm -f .github/workflows/bootstrap-source.yml
-          rm -f .github/workflows/bootstrap-and-build.yml
-          rm -f .github/workflows/archive-diagnostics.yml
 
       - name: Commit complete project source
         shell: bash
@@ -51,7 +48,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Publish complete project source"
+          git commit -m "Publish complete project source [source-restored]"
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
