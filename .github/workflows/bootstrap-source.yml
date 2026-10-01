@@ -1,48 +1,10 @@
-name: Bootstrap complete source
+name: Bootstrap complete source (disabled)
 
 on:
-  push:
-    branches: [main]
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  restore-source:
-    if: "!contains(github.event.head_commit.message, '[bootstrap]')"
+  disabled:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Reconstruct source archive
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cat bootstrap/source-xz.part*.b64 | tr -d '\r\n' | base64 -d > /tmp/source.xz
-          mkdir -p /tmp/restored
-          if tar -tJf /tmp/source.xz >/dev/null 2>&1; then
-            tar -xJf /tmp/source.xz -C /tmp/restored
-          else
-            xz -dc /tmp/source.xz > /tmp/source.payload
-            if unzip -t /tmp/source.payload >/dev/null 2>&1; then
-              unzip -q /tmp/source.payload -d /tmp/restored
-            else
-              echo "Unknown reconstructed archive format"
-              file /tmp/source.payload
-              exit 1
-            fi
-          fi
-          find /tmp/restored -maxdepth 3 -type f -print
-          cp -a /tmp/restored/. .
-          rm -rf bootstrap
-      - name: Commit restored source
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Nothing to commit"
-            exit 0
-          fi
-          git commit -m "Restore complete project source [bootstrap]"
-          git push
+      - run: echo "Superseded bootstrap workflow"
