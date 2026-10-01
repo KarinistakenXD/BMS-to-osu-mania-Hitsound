@@ -1,75 +1,10 @@
-name: Bootstrap source and build Windows
+name: Bootstrap source and build Windows (disabled)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: write
 
 jobs:
-  bootstrap:
+  disabled:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout bootstrap repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Restore complete source tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat bootstrap/source-xz.part*.b64 | tr -d '\r\n' | base64 --decode > source.tar.xz
-          tar -xJf source.tar.xz
-          rm -f source.tar.xz
-          rm -rf bootstrap
-          rm -f .github/workflows/bootstrap-and-build.yml
-
-      - name: Commit complete source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No bootstrap changes to commit."
-          else
-            git commit -m "Import complete project source"
-            git push origin HEAD:main
-          fi
-
-  build-windows:
-    needs: bootstrap
-    runs-on: windows-latest
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
-    steps:
-      - name: Checkout completed source
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Windows installer
-        run: npm run dist:win
-
-      - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: BMS-to-osu-mania-Hitsound-windows-x64
-          path: |
-            release/*.exe
-            release/*.yml
-            release/*.blockmap
-          if-no-files-found: error
+      - run: echo "Superseded bootstrap workflow"
