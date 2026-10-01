@@ -632,10 +632,14 @@ function updateAutoKeyBounds(): void {
 
 /** Build exactly the same lane/collision result used by final conversion. */
 let convertedPlacementCache: { keys: number; result: { notes: PlacedPreviewNote[]; shifted: number; stacked: number; nearShifted: number; nearConflicts: number } } | null = null;
+let preparationGeneration = 0;
 function invalidateConvertedPlacement(): void {
+  preparationGeneration++;
+  preparedPreviews.clear();
+  pendingPreviews.clear();
   convertedPlacementCache = null;
   state.convertedMixBuffer = null;
-  for (const key of [...state.tempoMixBuffers.keys()]) if (key.startsWith("converted@")) state.tempoMixBuffers.delete(key);
+  for (const key of [...state.tempoMixBuffers.keys()]) if ((key.startsWith("converted@") || key.startsWith("pair-converted@"))) state.tempoMixBuffers.delete(key);
 }
 
 function buildConvertedPlacement(keys: number): { notes: PlacedPreviewNote[]; shifted: number; stacked: number; nearShifted: number; nearConflicts: number } {
@@ -1159,13 +1163,13 @@ waveWrap.onclick = ev => {
 };
 window.addEventListener("resize", () => { drawWaveform(); drawNotePreview(); });
 
-resnap.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); if (previewPlaying) void startPreview(Number(timeline.value)); };
-snapTolerance.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); if (previewPlaying) void startPreview(Number(timeline.value)); };
-resnapMode.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); if (previewPlaying) void startPreview(Number(timeline.value)); };
-previewMode.onchange = () => { if (previewPlaying) void startPreview(Number(timeline.value)); };
+resnap.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); previewSettingsChanged(); };
+snapTolerance.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); previewSettingsChanged(); };
+resnapMode.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); previewSettingsChanged(); };
+previewMode.onchange = previewSettingsChanged;
 metronomeEnabled.onchange = () => { refreshMetronomeUi(); if (previewPlaying) void startPreview(Number(timeline.value)); };
 metronomeSource.onchange = () => { if (previewPlaying) void startPreview(Number(timeline.value)); };
-playbackRate.onchange = () => { if (previewPlaying) void startPreview(Number(timeline.value)); };
+playbackRate.onchange = previewSettingsChanged;
 hitsoundVolume.oninput = refreshVolumeLabels;
 audioVolume.oninput = refreshVolumeLabels;
 oggQuality.oninput = refreshVolumeLabels;
@@ -1377,7 +1381,7 @@ btnLoad.onclick = async () => {
   timeTotal.textContent = formatTime(state.songLengthMs / 1000);
   drawWaveform();
   statusEl.textContent = `Synchronized ${state.syncedEvents.length} audible BMS events. Target osu audio remains the default preview reference; BMS-native metronome is available as an alternate check.`;
-  btnPlay.disabled = false;
+  void warmPreview();
   btnConvert.disabled = false;
   btnLoad.disabled = false;
 };
@@ -1480,7 +1484,10 @@ function timeStretchWsola(input: AudioBuffer, rate: number): AudioBuffer {
   return trimmed;
 }
 
+const previewWavBytes = new WeakMap<AudioBuffer, Uint8Array>();
 function audioBufferToWavBytes(buffer: AudioBuffer): Uint8Array {
+  const cached = previewWavBytes.get(buffer);
+  if (cached) return cached;
   const channels = Math.min(2, Math.max(1, buffer.numberOfChannels));
   const frames = buffer.length;
   const bytes = new Uint8Array(44 + frames * channels * 2);
@@ -1499,6 +1506,7 @@ function audioBufferToWavBytes(buffer: AudioBuffer): Uint8Array {
       offset += 2;
     }
   }
+  previewWavBytes.set(buffer, bytes);
   return bytes;
 }
 
@@ -1522,12 +1530,21 @@ async function renderEventBus(events: Note[]): Promise<AudioBuffer | null> {
 }
 
 async function previewMixBuffer(mode: PreviewMode): Promise<AudioBuffer | null> {
+  const generation = preparationGeneration;
   if (mode === "target-only") return null;
   if (mode === "bms-reference") {
-    if (!state.referenceMixBuffer) state.referenceMixBuffer = await renderEventBus(state.syncedEvents);
+    if (!state.referenceMixBuffer) {
+      const buffer = await renderEventBus(state.syncedEvents);
+      if (generation !== preparationGeneration) return null;
+      state.referenceMixBuffer = buffer;
+    }
     return state.referenceMixBuffer;
   }
-  if (!state.convertedMixBuffer) state.convertedMixBuffer = await renderEventBus(outputEvents());
+  if (!state.convertedMixBuffer) {
+    const buffer = await renderEventBus(outputEvents());
+    if (generation !== preparationGeneration) return null;
+    state.convertedMixBuffer = buffer;
+  }
   return state.convertedMixBuffer;
 }
 
@@ -1539,13 +1556,14 @@ async function tempoProcessedBuffer(input: AudioBuffer, rate: number, cacheKey: 
     : state.tempoMixBuffers.get(key);
   if (cached) return cached;
 
+  const generation = preparationGeneration;
   try {
     const wav = audioBufferToWavBytes(input);
     const result = await window.bms2osu.tempoAudio(wav, rate);
     if (result?.ok && result.bytes?.length) {
       const decoded = await audioCtx.decodeAudioData(bytesToArrayBuffer(result.bytes));
+      if (generation !== preparationGeneration) return null;
       if (cacheKey === "target") {
-        state.stretchedTargetBuffers.clear();
         state.stretchedTargetBuffers.set(Number(rate.toFixed(3)), decoded);
       } else state.tempoMixBuffers.set(key, decoded);
       appendLog(`Prepared ${rate.toFixed(2)}× tempo-only preview with FFmpeg atempo (${cacheKey}).`);
@@ -1565,10 +1583,12 @@ async function tempoProcessedPairBuffer(target: AudioBuffer, hitsounds: AudioBuf
   const cached = state.tempoMixBuffers.get(key);
   if (cached) return cached;
   if (Math.abs(rate - 1) < 1e-6) return null;
+  const generation = preparationGeneration;
   try {
     const result = await window.bms2osu.tempoPair(audioBufferToWavBytes(target), audioBufferToWavBytes(hitsounds), rate);
     if (result?.ok && result.bytes?.length) {
       const decoded = await audioCtx.decodeAudioData(bytesToArrayBuffer(result.bytes));
+      if (generation !== preparationGeneration) return null;
       if (decoded.numberOfChannels >= 4) {
         state.tempoMixBuffers.set(key, decoded);
         appendLog(`Prepared ${rate.toFixed(2)}× aligned 4-channel tempo preview (song + BMS bus share one time warp).`);
@@ -1596,6 +1616,7 @@ function pitchPreservedMetronomeBuffer(input: AudioBuffer, rate: number, accent:
 }
 
 function stopPreview(): void {
+  transportRequest++;
   if (targetSource) try { targetSource.stop(); } catch {}
   if (keyBusSource) try { keyBusSource.stop(); } catch {}
   for (const s of keySources) try { s.stop(); } catch {}
@@ -1741,30 +1762,25 @@ function schedulePreviewUntil(endSec: number, rate: number): void {
   previewScheduledUntilSec = Math.max(previewScheduledUntilSec, endSec);
 }
 
-async function startPreview(startSec: number): Promise<void> {
-  if (!audioCtx || !state.targetAudioBuffer || !state.compatibilityOk) return;
-  stopPreview();
-  await audioCtx.resume();
-  const mode = previewMode.value as PreviewMode;
-  const rate = currentRate();
-  if (Math.abs(rate - 1) > 1e-6) {
-    const ffmpeg = await window.bms2osu.ensureFfmpeg("Pitch-preserving slow preview needs FFmpeg so the osu! audio and rendered BMS hitsound bus can share one tempo transform.");
-    if (!ffmpeg?.available) {
-      appendLog(`[WARN] Slow preview cancelled because FFmpeg is not available. Install it with: ${ffmpeg?.command ?? "winget install --id Gyan.FFmpeg -e"}`);
-      btnPlay.disabled = false;
-      btnPause.disabled = true;
-      return;
-    }
-  }
-  const songEndSec = state.songLengthMs / 1000;
-  startSec = clamp(startSec, 0, songEndSec);
-  if (startSec >= songEndSec) return;
 
-  btnPlay.disabled = true;
-  btnPause.disabled = true;
-  if (Math.abs(rate - 1) > 1e-6) appendLog(`Preparing ${rate.toFixed(2)}× tempo-only preview. Song and the full BMS keysound bus are processed with the same tempo ratio to keep them aligned…`);
-
+type PreparedPreview = { pairedPreview: AudioBuffer | null; targetPreview: AudioBuffer | null; mixPreview: AudioBuffer | null };
+const preparedPreviews = new Map<string, PreparedPreview>();
+const pendingPreviews = new Map<string, Promise<PreparedPreview>>();
+let transportRequest = 0;
+function preparationKey(mode: PreviewMode, rate: number): string {
+  return preparationGeneration + ":" + mode + "@" + rate.toFixed(3);
+}
+function preparePreview(mode: PreviewMode, rate: number): Promise<PreparedPreview> {
+  const key = preparationKey(mode, rate);
+  const cached = preparedPreviews.get(key);
+  if (cached) return Promise.resolve(cached);
+  const pending = pendingPreviews.get(key);
+  if (pending) return pending;
+  const generation = preparationGeneration;
+  const job = (async () => {
+    if (!audioCtx || !state.targetAudioBuffer) throw new Error("No analyzed audio");
   const rawMix = await previewMixBuffer(mode);
+  if (generation !== preparationGeneration) throw new Error("Preview inputs changed");
   let pairedPreview: AudioBuffer | null = null;
   let targetPreview: AudioBuffer | null = null;
   let mixPreview: AudioBuffer | null = null;
@@ -1775,7 +1791,7 @@ async function startPreview(startSec: number): Promise<void> {
     // and keysound bus from receiving different content-dependent warps.
     pairedPreview = await tempoProcessedPairBuffer(state.targetAudioBuffer, rawMix, rate, "converted");
   }
-  if (!pairedPreview) {
+  if (!pairedPreview && !(mode === "target-plus-keys" && rawMix && Math.abs(rate - 1) > 1e-6)) {
     targetPreview = shouldPlayTarget(mode)
       ? await tempoProcessedBuffer(state.targetAudioBuffer, rate, "target")
       : null;
@@ -1791,11 +1807,67 @@ async function startPreview(startSec: number): Promise<void> {
       : (shouldPlayTarget(mode) && !targetPreview) || (!!rawMix && !mixPreview);
     if (failed) {
       appendLog("[ERROR] Slow preview could not be prepared with FFmpeg, so playback was cancelled to avoid song/keysound desynchronization.");
-      btnPlay.disabled = false;
-      btnPause.disabled = true;
-      return;
+      throw new Error("Preview preparation failed");
     }
   }
+
+  return { pairedPreview, targetPreview, mixPreview };
+
+  })().then(result => {
+    if (generation !== preparationGeneration) throw new Error("Preview inputs changed");
+    preparedPreviews.set(key, result);
+    return result;
+  }).finally(() => { pendingPreviews.delete(key); });
+  pendingPreviews.set(key, job);
+  return job;
+}
+async function warmPreview(): Promise<void> {
+  if (!state.compatibilityOk || !state.targetAudioBuffer) return;
+  const mode = previewMode.value as PreviewMode;
+  const rate = currentRate();
+  const key = preparationKey(mode, rate);
+  btnPlay.disabled = true;
+  btnPlay.textContent = "Preparing…";
+  try {
+    await preparePreview(mode, rate);
+  } catch (error) {
+    if (key === preparationKey(previewMode.value as PreviewMode, currentRate()))
+      appendLog("[WARN] " + (error instanceof Error ? error.message : String(error)));
+  } finally {
+    if (key === preparationKey(previewMode.value as PreviewMode, currentRate())) {
+      btnPlay.textContent = "▶ Preview";
+      btnPlay.disabled = previewPlaying || !state.compatibilityOk;
+    }
+  }
+}
+function previewSettingsChanged(): void {
+  if (previewPlaying) void startPreview(Number(timeline.value));
+  else { stopPreview(); void warmPreview(); }
+}
+
+async function startPreview(startSec: number): Promise<void> {
+  if (!audioCtx || !state.targetAudioBuffer || !state.compatibilityOk) return;
+  stopPreview();
+  const request = transportRequest;
+  await audioCtx.resume();
+  if (request !== transportRequest) return;
+  const mode = previewMode.value as PreviewMode;
+  const rate = currentRate();
+  const songEndSec = state.songLengthMs / 1000;
+  startSec = clamp(startSec, 0, songEndSec);
+  if (startSec >= songEndSec) return;
+
+  btnPlay.disabled = true;
+  btnPause.disabled = true;
+
+  const key = preparationKey(mode, rate);
+  let prepared = preparedPreviews.get(key);
+  if (!prepared) {
+    try { prepared = await preparePreview(mode, rate); }
+    catch { if (request === transportRequest) btnPlay.disabled = false; return; }
+  }
+  if (request !== transportRequest || key !== preparationKey(previewMode.value as PreviewMode, currentRate())) return;
+  const { pairedPreview, targetPreview, mixPreview } = prepared;
 
   previewPlaying = true;
   previewStartSec = startSec;

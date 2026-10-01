@@ -74,6 +74,13 @@ The target osu! difficulty can be lower-key, such as 4K. It is timing/reference 
 
 ## Slow preview and FFmpeg
 
+Preview audio is prepared after analysis and when preview mode, resnap settings,
+or rate changes. Play and Pause reuse prepared audio for unchanged inputs.
+The button shows Preparing while a new bus or tempo transform is being built.
+Prepared rates are retained until the analyzed files or relevant settings change.
+The song and keysounds still share the same four-channel FFmpeg transform at
+non-1x rates; volume, seeking, and metronome changes reuse that audio.
+
 Non-1x preview is treated as one shared timing problem.
 
 osu!lazer uses BASS/BASS_FX tempo processing for track-speed changes rather than simple sample-rate resampling. This project does not bundle BASS, so slowed preview uses **FFmpeg**.

@@ -25,7 +25,13 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Verify preview cache and renderer
+        run: |
+          npm test
+          npm run typecheck:renderer
+          npx electron tests/preview-electron.cjs
 
       - name: Build Windows installer
         run: npm run dist:win
@@ -69,4 +75,4 @@ jobs:
             Write-Host "$tag already exists; leaving the published release unchanged."
             exit 0
           }
-          gh release create $tag release/*.exe --target "$env:GITHUB_SHA" --title "BMS to osu!mania Hitsound $tag" --notes "First Windows release of BMS to osu!mania Hitsound. Download the x64 Setup .exe below. FFmpeg is requested in-app when a feature requires it."
+          gh release create $tag release/*.exe --target "$env:GITHUB_SHA" --title "BMS to osu!mania Hitsound $tag" --generate-notes

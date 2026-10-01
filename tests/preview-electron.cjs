@@ -1,0 +1,50 @@
+const { app, BrowserWindow } = require('electron');
+const fs = require('node:fs');
+const path = require('node:path');
+const esbuild = require('esbuild');
+const assert = require('node:assert/strict');
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+app.whenReady().then(async () => {
+  const window = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
+  try {
+    const html = fs.readFileSync('renderer/index.html', 'utf8').replace(/<script[^>]*src=[^>]*><\/script>/g, '');
+    await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await window.webContents.executeJavaScript(`window.bms2osu = { onLog: () => {}, checkFfmpeg: async () => ({ available: false }), ffmpegStatus: async () => ({ available: false }) }; void 0;`);
+    const source = fs.readFileSync('renderer/renderer.ts', 'utf8');
+    const test = `
+      window.smoke = async () => {
+        audioCtx = new AudioContext();
+        state.targetAudioBuffer = audioCtx.createBuffer(2, audioCtx.sampleRate * 8, audioCtx.sampleRate);
+        const sample = audioCtx.createBuffer(1, audioCtx.sampleRate / 10, audioCtx.sampleRate);
+        sample.getChannelData(0).fill(.1);
+        state.audioBuffers.set('01', sample);
+        state.syncedEvents = [{ timeMs: 500, wavId: '01', lane: 0, isBgm: false }];
+        state.songLengthMs = 8000; state.compatibilityOk = true;
+        previewMode.value = 'target-plus-keys'; playbackRate.value = '1';
+        metronomeEnabled.checked = false;
+        await warmPreview();
+        const bus = state.convertedMixBuffer;
+        if (!bus) throw new Error('Bus not prepared');
+        const started = performance.now();
+        await startPreview(0);
+        const playMs = performance.now() - started;
+        if (!previewPlaying || !targetSource || !keyBusSource) throw new Error('Playback did not start');
+        const clock = previewStartedAt;
+        stopPreview();
+        const resumed = performance.now();
+        await startPreview(2);
+        const resumeMs = performance.now() - resumed;
+        if (state.convertedMixBuffer !== bus || previewStartSec !== 2) throw new Error('Resume failed');
+        const pending = startPreview(3); stopPreview(); await pending;
+        if (previewPlaying) throw new Error('Cancelled Play restarted audio');
+        return { playMs, resumeMs, sharedClock: clock > 0, busFrames: bus.length };
+      };
+    `;
+    const bundled = esbuild.buildSync({ stdin: { contents: source + test, resolveDir: path.resolve('renderer'), loader: 'ts' }, bundle: true, write: false, format: 'iife' }).outputFiles[0].text;
+    await window.webContents.executeJavaScript(bundled);
+    const result = await window.webContents.executeJavaScript('window.smoke()');
+    assert(result.playMs < 500 && result.resumeMs < 500);
+    console.log('PASS: Windows Electron/Web Audio prepare, Play, seek/resume, and cancellation', JSON.stringify(result));
+    app.exit(0);
+  } catch (error) { console.error(error); app.exit(1); }
+});
