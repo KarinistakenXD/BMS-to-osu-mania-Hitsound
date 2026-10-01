@@ -248,7 +248,7 @@
         <div class="card-head">Conversion behavior</div>
         <div class="card-body">
           <div class="checks">
-            <label class="check"><input id="resnap" type="checkbox" checked><span><b>Re-snap after audio sync</b><div class="hint">Uses the selected .osu hitobjects first, then preserves the native BMS rhythmic phase when no target note exists.</div></span></label>
+            <label class="check"><input id="resnap" type="checkbox" checked><span><b>Re-snap after audio sync</b><div class="hint">Uses the analyzed .osu hitobjects first, then native BMS rhythmic phase. Switching compatible difficulties keeps this timing reference; Analyze updates it.</div></span></label>
             <label class="field">Resnap strategy <select id="resnap-mode" class="wide-select"><option value="thorough" selected>Thorough · target + native BMS phase</option><option value="fast">Fast · conservative target capture</option></select></label>
             <label class="field">Base tolerance <input id="snap-tolerance" type="number" value="14" min="0" max="50"> ms</label>
           </div>

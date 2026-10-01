@@ -84,8 +84,10 @@ Changing the displayed/output key count only rebuilds the note lane layout;
 it preserves prepared audio and ongoing playback, including during preparation.
 Switching osu difficulties reuses recent analysis when artist, title, complete
 timing data, and the unchanged source audio/BMS file match. The new difficulty's
-notes and key count update immediately. If its hitobjects change resnapped
-keysound timing, only that preview bus is prepared again; audio alignment is reused.
+notes and key count update immediately without rebuilding preview audio or
+interrupting playback, even with resnap enabled. Resnap anchors and audio duration
+remain tied to the analyzed difficulty so preview and export keep the same timing.
+Press Analyze to explicitly use the new difficulty as the timing reference.
 
 Non-1x preview is treated as one shared timing problem.
 

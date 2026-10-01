@@ -177,31 +177,15 @@ async function reuseAnalyzedTarget(osuPath: string): Promise<boolean> {
   if (!target?.reuseKey || target.reuseKey !== state.analyzedReuseKey ||
       generation !== preparationGeneration || bmsPath !== state.bmsPath || !state.targetAudioBuffer) return false;
 
-  stopPreview();
-  const previousEvents = outputEvents();
-  const previousLength = state.songLengthMs;
   state.osuPath = osuPath;
   state.metadata.osu = target.metadata;
   state.timingPoints = target.timingPoints;
   state.targetMode = target.osuPreview.mode;
   state.targetKeys = target.osuPreview.keys;
   state.targetNotes = target.osuPreview.notes;
-  state.targetAnchorTimes = [...new Set(state.targetNotes.map(note => note.timeMs))];
-  rebuildPhaseBeatLocks();
-  const nextEvents = outputEvents();
-  state.songLengthMs = Math.max(state.targetAudioBuffer.duration * 1000,
-    state.syncedEvents.reduce((end, note) => Math.max(end, note.timeMs), 0),
-    state.targetNotes.reduce((end, note) => Math.max(end, note.endTimeMs), 0));
-  const audioChanged = previousLength !== state.songLengthMs || previousEvents.length !== nextEvents.length ||
-    previousEvents.some((event, i) => event.timeMs !== nextEvents[i].timeMs || event.wavId !== nextEvents[i].wavId);
-  invalidateConvertedPlacement();
-  if (audioChanged) {
-    invalidatePreviewAudio();
-    if (previousLength !== state.songLengthMs) {
-      state.referenceMixBuffer = null;
-      state.tempoMixBuffers.clear();
-    }
-  }
+  // A compatible difficulty switch changes the displayed notes, not the
+  // analyzed resnap anchors, audio duration or prepared transport buffers.
+  // Analyze explicitly replaces that timing reference for preview and export.
   $<HTMLDivElement>("path-osu").textContent = osuPath;
   fileSummaryOsu.textContent = `${osuPath.split(/[\\/]/).pop() || osuPath} · ${state.targetKeys}K · ${state.targetNotes.length} objects`;
   timeline.max = String(state.songLengthMs / 1000);
@@ -210,7 +194,7 @@ async function reuseAnalyzedTarget(osuPath: string): Promise<boolean> {
   btnConvert.disabled = false;
   checkReady();
   statusEl.textContent = "Reused the recent audio analysis: artist, title, timing and audio match.";
-  appendLog("Selected difficulty updated without decoding or repeating audio synchronization.");
+  appendLog("Difficulty notes updated; analyzed timing reference and prepared audio retained.");
   void warmPreview();
   return true;
 }
@@ -531,7 +515,7 @@ function isAlreadyGridSnapped(timeMs: number, epsilon = 1.25): boolean {
 }
 
 function bestTargetAnchor(note: Note, phase: SnapCandidate | null, searchMs: number, thorough: boolean): SnapCandidate | null {
-  if (state.targetMode !== 3 || !state.targetNotes.length) return null;
+  if (state.targetMode !== 3 || !state.targetAnchorTimes.length) return null;
   const anchors = uniqueTargetAnchorTimes();
   if (!anchors.length) return null;
   const tolerance = Math.max(0, Number(snapTolerance.value) || 0);
@@ -1891,6 +1875,11 @@ async function warmPreview(): Promise<void> {
   const mode = previewMode.value as PreviewMode;
   const rate = currentRate();
   const key = preparationKey(mode, rate);
+  if (preparedPreviews.has(key)) {
+    btnPlay.textContent = "▶ Preview";
+    btnPlay.disabled = previewPlaying || !state.compatibilityOk;
+    return;
+  }
   btnPlay.disabled = true;
   btnPlay.textContent = "Preparing…";
   try {
