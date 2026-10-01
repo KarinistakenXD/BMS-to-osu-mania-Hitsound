@@ -1,199 +1,206 @@
 # BMS to osu!mania Hitsound
 
-A desktop Electron/TypeScript tool for converting BMS/BME keysound charts into an osu!mania **hitsound difficulty** while keeping the target osu! audio as the timing/audio reference.
+Turn BMS keysounds into fully playable osu!mania hitsound maps with automatic audio alignment, resnapping, preview, and export.
 
-The goal is not to turn a BMS chart into a normal gameplay conversion. The goal is to recover every audible BMS layer, align it to the selected osu! song, place those layers into a playable mania field, and export custom samples/hitobjects that can be used as a ranked-map hitsound difficulty.
+## Download
 
-## What the program does
+For normal use, download the latest **Windows installer (.exe) from GitHub Releases**.
 
-- Parses BMS/BME timing, BPM changes, STOPs, measure-length changes, BGM events, invisible notes, and WAV mappings.
-- Reads the selected osu!mania `.osu` difficulty and its `AudioFilename`, red timing points, meter, key count, and hitobjects.
-- Renders BMS keysounds into an audio reference and aligns that reference against the target osu! audio instead of assuming the BMS and osu! files begin at the same sample.
-- Supports constant offset and drift-aware synchronization.
-- Re-snaps converted events after synchronization using, in order:
-  1. a compatible hitobject in the selected target `.osu`,
-  2. the exact native BMS measure/fraction phase,
-  3. a validated target timing grid,
-  4. the synchronized audio position when no safe snap exists.
-- Automatically selects the minimum output key count required to avoid same-column objects inside the verifier concurrency window, up to 18K.
-- Forces all audible BMS layers into the playable note field. BGM/invisible keysounds are not intentionally exported as storyboard sample events.
-- Merges unavoidable overflow layers into composite custom samples instead of creating concurrent circles in one column.
-- Exports samples either in their original format or as recompressed OGG Vorbis.
-- Supports keep-existing or replace-existing sample behavior.
-- Shows the target audio waveform, seekable full-song preview, synchronized note preview, target-difficulty overlay, metronome, meter indicator, and key activity monitor.
-- Spacebar toggles preview play/pause.
-- Preview audio and hitsound volumes are independent; hitsound volume is also written to the generated `.osu` hitobjects.
-- Playback-rate preview supports 0.25x, 0.50x, 0.75x, and 1.00x.
+You do **not** need Node.js, npm, or the GitHub source-code ZIP to run a release build. The automatically generated **Source code (zip)** and **Source code (tar.gz)** links on GitHub are for developers; they are not precompiled applications.
 
-## Slow-preview audio design
+> **Windows SmartScreen:** current releases are not code-signed, so Windows may show an "Unknown publisher" warning. The complete source and Windows build workflow are public in this repository.
 
-osu!lazer currently uses BASS/BASS_FX for track tempo adjustment. In osu-framework's `TrackBass`, the track is wrapped in a BASS_FX tempo stream and configured with a quick tempo algorithm, 4 ms overlap, and a 30 ms sequence. osu!framework samples are a separate subsystem and do not inherently provide the same track-tempo functionality.
+## What is BMS?
 
-This project does **not** bundle BASS. For non-1x preview, it uses FFmpeg tempo processing instead:
+**BMS (Be-Music Source)** is a family of community rhythm-game chart formats built around keysounded music.
 
-1. The target osu! audio is decoded.
-2. The complete converted BMS hitsound bus is rendered at its final synchronized/resnapped positions.
-3. For `osu audio + converted hitsounds`, both stereo layers are merged into one multichannel stream and passed through the **same** `atempo` transform.
-4. The result is split back into song and hitsound volume buses for playback.
+Unlike a typical osu!mania beatmap, a BMS chart does not necessarily rely on one finished/mastered song file. A chart can define many small audio files through entries such as `#WAVxx`, then trigger those samples at musical positions. In practice, a BMS chart can reconstruct a large part of the song from hundreds or thousands of separately timed keysounds.
 
-Using one shared time-warp is important: processing hundreds of short BMS samples independently can move transients differently and cause the slowed keysounds to drift away from the slowed song.
+That difference is the main reason this converter exists: osu!mania normally plays one song file while hitobjects optionally trigger hitsounds, whereas BMS can treat the keysounds themselves as the arrangement.
 
-If FFmpeg is unavailable, the app does **not** use the old in-process slow-preview fallback. Instead it shows an install prompt with the Windows command `winget install --id Gyan.FFmpeg -e`. Slow preview is cancelled until FFmpeg is available, which avoids previewing the song and BMS hitsounds with a low-quality transform that can drift or sound broken.
+Common BMS-family extensions include `.bms`, `.bme`, `.bml`, `.pms`, and `.bmx`. BMS has accumulated many extensions over time, and different players/editors do not necessarily implement every feature identically.
 
-References:
+Useful BMS references and tools:
 
-- osu-framework `TrackBass.cs`: https://github.com/ppy/osu-framework/blob/master/osu.Framework/Audio/Track/TrackBass.cs
-- osu-framework audio documentation: https://github.com/ppy/osu-framework/wiki/Playing-audio
-- osu! discussion on slower editor playback quality/synchronization: https://github.com/ppy/osu/discussions/28987
+- [bemusic/bmspec](https://github.com/bemusic/bmspec) — executable/documented BMS-format behavior plus links to other format references.
+- [beatoraja](https://github.com/exch-bms2/beatoraja) — open-source BMS player.
+- [iBMSC](https://github.com/aqtq314/iBMSC) — graphical BMS creator/editor.
 
-## Requirements
+## What this program does
 
-- Windows is the primary target for the current desktop build.
-- Node.js + npm for source/development builds.
-- FFmpeg is required for:
-  - OGG sample conversion,
-  - composite sample mixing,
-  - high-quality pitch-preserving non-1x preview.
+This is specifically for building an **osu!mania hitsound difficulty**. It is not intended to be a normal gameplay BMS → osu!mania chart converter.
 
-When a feature requires FFmpeg and it is missing, the app shows a modal with a **Copy winget command** button and a **Retry** button. The Windows command is:
+The converter:
+
+1. parses BMS/BME timing, BPM changes, STOPs, measure-length changes, BGM/invisible events, long-note-related data, and `#WAV` mappings;
+2. reconstructs a BMS audio reference from the chart's keysounds;
+3. aligns that reference to the selected osu! song audio instead of assuming both files start at the same physical sample;
+4. maps BMS events into target-osu! time;
+5. resnaps using target hitobjects when they are rhythmically trustworthy, then native BMS measure/fraction timing when the selected target difficulty is sparse;
+6. places every audible BMS layer into a playable mania field;
+7. exports the custom samples and a generated `.osu` hitsound difficulty.
+
+The target osu! difficulty can be lower-key, such as 4K. It is timing/reference evidence; it does **not** need to contain every rhythm that exists in the BMS.
+
+## Related osu! tools
+
+- [osu!](https://osu.ppy.sh/) — use the editor to inspect and listen to the generated difficulty.
+- [Mapset Verifier](https://github.com/Naxesss/MapsetVerifier) — useful for checking quantifiable issues such as unsnapped or concurrent hitobjects. This project uses its warnings heavily during regression testing, but verifier output should still be reviewed with mapper judgement.
+- [osu-framework](https://github.com/ppy/osu-framework) — useful reference for osu!lazer's audio architecture. In particular, `TrackBass` uses BASS_FX tempo processing for pitch-preserving track-speed changes.
+
+## Main features
+
+- Audio-based BMS ↔ osu! alignment rather than simply adding the first red timing-point offset.
+- Constant-offset and drift-aware synchronization.
+- Three-state BMS/`.osu` pair verification: **Verified**, **Uncertain**, or **Clearly incompatible**.
+- Deep resnapping:
+  - compatible target-`.osu` hitobject first;
+  - exact native BMS measure/fraction fallback;
+  - validated target timing-grid fallback;
+  - synchronized audio position when no snap is trustworthy.
+- Automatic output key count up to 18K based on lane demand and the near-concurrent safety window.
+- All audible BMS sounds are converted into the playable note field by design.
+- Composite samples for unavoidable overflow instead of dumping sounds into storyboard samples or creating duplicate concurrent circles.
+- Original-format sample copy or OGG Vorbis export.
+- Seekable full-song waveform preview.
+- Converted-BMS, target-osu!, and overlay comparison modes.
+- Fixed 18K physical preview-lane width so lower-key target maps stay centered instead of stretching across the full preview.
+- Note-preview speed 15–40, approximately 765 ms down to 287 ms of approach time.
+- Notes disappear exactly at the NOW/judgement line, with only a small pre-hit glow.
+- Visual metronome with meter/beat indicators.
+- `bms!` logo BPM pulse and click-particle gimmick.
+- Spacebar play/pause.
+- Independent song and hitsound preview volume.
+
+## Slow preview and FFmpeg
+
+Non-1x preview is treated as one shared timing problem.
+
+osu!lazer uses BASS/BASS_FX tempo processing for track-speed changes rather than simple sample-rate resampling. This project does not bundle BASS, so slowed preview uses **FFmpeg**.
+
+The complete converted BMS hitsound arrangement is rendered as one bus. That bus and the target osu! audio are passed through the same tempo transform so both layers receive the same time warp. This avoids the earlier problem where the song slowed down while short BMS samples remained effectively independent and drifted out of alignment.
+
+If FFmpeg is missing, the app shows an install dialog instead of silently using the old low-quality fallback. On Windows it provides a copyable command:
 
 ```powershell
-winget install --id Gyan.FFmpeg -e
+winget install --id Gyan.FFmpeg -e --source winget
 ```
 
-FFmpeg is discovered from:
+The dialog can retry detection after installation. The app checks:
 
-1. `FFMPEG_PATH`,
-2. beside the packaged application/resources,
-3. the system `PATH`.
+1. `FFMPEG_PATH`;
+2. FFmpeg beside the packaged application/resources;
+3. WinGet's local command-link directory;
+4. the system `PATH`.
 
-This makes it possible to bundle `ffmpeg.exe` with a future installer.
+FFmpeg is required for:
 
-## Running from source
+- pitch-preserving non-1x preview;
+- OGG sample conversion;
+- mixing composite overflow keysounds.
 
-Open a terminal in the project folder:
+Normal 1.00x preview and analysis can still run without it.
+
+Audio implementation references:
+
+- [osu-framework TrackBass.cs](https://github.com/ppy/osu-framework/blob/master/osu.Framework/Audio/Track/TrackBass.cs)
+- [osu-framework audio documentation](https://github.com/ppy/osu-framework/wiki/Playing-audio)
+
+## Typical workflow
+
+1. Select the source BMS/BME chart.
+2. Select the target osu!mania `.osu` difficulty.
+3. Run **Analyze & synchronize**.
+4. If pair verification is uncertain, review the measured checks and decide whether the unusual/remastered pair is intentional.
+5. Inspect the waveform and note preview.
+6. Compare **Converted BMS**, **Target osu!**, or **Overlay**.
+7. Preview timing/audio, optionally at a slower rate with FFmpeg installed.
+8. Choose sample-export options.
+9. Convert the difficulty and export samples.
+10. Open the result in osu! and run Mapset Verifier before treating it as rank-ready.
+
+## Timing / resnap model
+
+BMS mathematical timing and audio alignment are deliberately separate:
+
+```text
+BMS measure/fraction timing
+        ↓
+absolute BMS event timeline
+        ↓
+rendered BMS audio reference
+        ↓
+match against target osu! audio
+        ↓
+BMS → target time mapping
+        ↓
+validated target/native-phase resnap
+        ↓
+automatic lane allocation / composites
+        ↓
+playable custom-sample hitobjects
+```
+
+The converter intentionally does **not** assume that `BMS time + first osu! red point` is sufficient. Independently cut/mastered audio can contain different leading silence, transient placement, offsets, or small drift.
+
+## Building from source (developers)
+
+Most users should use the **.exe from Releases**. This section is only for contributors or people who want to inspect or modify the source.
+
+Requirements:
+
+- Node.js 22 recommended;
+- npm;
+- Windows for building the Windows installer;
+- FFmpeg for the audio features described above.
+
+Clone the repository, then:
 
 ```bash
 npm install
 npm start
 ```
 
-`npm start` rebuilds the Vite renderer and Electron TypeScript before launching.
-
-For a faster launch after a successful build:
+Build the Windows x64 installer locally:
 
 ```bash
-npm run start:fast
-```
-
-## Typical workflow
-
-1. Click **Select BMS chart** and choose the `.bms`/`.bme` source.
-2. Click **Select target .osu** and choose the osu!mania difficulty whose song/timing should be the reference.
-3. Click **Analyze & synchronize**.
-4. If the BMS/`.osu` pair checker is uncertain, review the detailed modal. A clearly unrelated pair is blocked; a plausible but unusual/remastered pair can be continued manually.
-5. Check the waveform and note preview.
-6. Use **Converted BMS**, **Target osu! difficulty**, or **Overlay comparison** to inspect placement.
-7. Adjust note-preview scroll speed from 15 to 40. The approach window is approximately:
-   - speed 40: 287 ms,
-   - speed 15: 765 ms.
-8. Preview at 1x first. Slower rates require FFmpeg so the target song and rendered BMS hitsound bus receive one shared pitch-preserving tempo transform.
-9. Adjust **Audio volume** for comparison only and **Hitsound sample volume** for preview/output.
-10. Choose sample output format and overwrite policy.
-11. Click **Convert difficulty + export samples**.
-12. Run Mapset Verifier on the generated difficulty and inspect any remaining unsnapped/concurrent-object warnings.
-
-## Note preview
-
-The preview uses a fixed 18K physical lane width. Lower-key target difficulties are centered rather than stretched across the entire canvas, so a 4K target is visually comparable with a 15K/18K converted hitsound field.
-
-The judgment line is near the bottom of the preview. Notes disappear at the judgment line rather than continuing past it. A small pre-hit glow is used only as a subtle piano/key-press cue.
-
-The **Key monitor** follows the automatically selected output keymode and flashes columns just before their converted notes reach the judgment line.
-
-## Automatic output key count
-
-The app estimates how many lanes are required so a lane is not reused inside the current 28 ms safety window. The output key count:
-
-- cannot be set below the computed safe minimum,
-- cannot exceed 18K,
-- uses composite samples if the chart genuinely requires more simultaneous/near-simultaneous audible layers than can fit safely in 18 columns.
-
-## Metronome
-
-The metronome can follow:
-
-- target osu! red timing points (default), including the timing point's meter,
-- synchronized BMS-native beat timing.
-
-The visual pendulum swings on real scheduled beats, downbeats use a stronger accent, and the meter row (`[ ] [ ] [ ] [ ]`, etc.) follows the current beat in the measure.
-
-The `bms!` logo pulses to the effective preview BPM while playing and returns to a 60 BPM idle pulse when preview is paused/stopped. Clicking it drops decorative `bms!` particles.
-
-## Pair verification
-
-The pair checker intentionally has three outcomes:
-
-- **Verified** — continue automatically.
-- **Uncertain** — show the measured checks and allow manual continuation.
-- **Clearly incompatible** — block preview/conversion.
-
-Weak waveform correlation alone is not considered enough to reject a pair because BMS keysound renders and mastered/remastered osu! audio can differ substantially.
-
-## Windows release build
-
-The repository includes `electron-builder` configuration and a GitHub Actions workflow for Windows x64.
-
-Build locally on Windows:
-
-```bash
-npm install
 npm run dist:win
 ```
 
-Release files are written to `release/` and include an x64 NSIS installer executable.
+The installer is written to `release/`.
 
-The GitHub workflow runs on pushes to `main`, can be started manually, and publishes build artifacts. Tags matching `v*` (for example `v1.0.0`) also create a GitHub Release with the generated `.exe` files attached.
+There is deliberately no separate `RUN_APP.bat` launcher in the repository. `npm start` is the development path; the installed `.exe` is the normal user path.
+
+## Automated Windows builds
+
+The repository's GitHub Actions workflow builds the Windows x64 NSIS installer on:
+
+- pushes to `main` — produces a downloadable Actions artifact;
+- manual workflow runs;
+- tags matching `v*`.
+
+A version tag such as `v1.0.0` also publishes the generated installer to GitHub Releases automatically.
 
 ## Repository structure
 
 ```text
 electron/
-  main.ts       Electron window, dialogs, file I/O, FFmpeg operations
-  preload.ts    safe renderer IPC bridge
+  main.ts       Electron window, dialogs, FFmpeg, file I/O
+  preload.ts    context-isolated IPC bridge
 renderer/
-  renderer.ts   synchronization workflow, preview, note display, transport
-  audio-sync.ts audio feature extraction and BMS↔osu time mapping
-  index.html    osu!web-inspired interface
+  index.html    interface
+  renderer.ts   conversion workflow, preview, transport, note display
+  audio-sync.ts audio feature extraction and BMS ↔ osu! time mapping
 src/core/
   bms-parser.ts
   bms-timing.ts
-  osu-writer.ts
+  bms-osu-core.ts
   node-io.ts
+  osu-writer.ts
+build/
+  icon.ico      Windows application / installer icon
 ```
-
-## Important design rule
-
-BMS mathematical timing and audio synchronization are separate concerns:
-
-```text
-BMS measure/fraction timing
-        ↓
-absolute BMS timeline
-        ↓
-rendered BMS audio reference
-        ↓
-match against target osu! audio
-        ↓
-BMS → osu time mapping
-        ↓
-validated resnap / lane allocation
-        ↓
-playable custom-sample hitobjects
-```
-
-Do not replace this with `BMS time + first osu timing point`. The selected osu! timing point is useful as a rhythmic grid, but it does not by itself describe how two independently cut/mastered audio files line up.
 
 ## Status
 
-This is still an experimental conversion/debugging tool. Always listen to the exported map and run Mapset Verifier before treating the result as rank-ready.
+This converter is still experimental. Listen through the generated map and run Mapset Verifier before using the output in a serious or ranked mapset. BMS implementations can vary, and timing/hitsound judgement should still be done by a mapper.
