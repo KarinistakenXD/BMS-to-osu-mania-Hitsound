@@ -1,0 +1,57 @@
+{
+  "name": "bms-to-osu-mania-hitsound",
+  "version": "1.0.0",
+  "description": "Audio-align BMS keysounds to osu!mania, preview timing and note placement, and export every audible BMS layer as playable custom hitsounds.",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && npx tsc -p tsconfig.electron.json",
+    "start": "npm run build && electron .",
+    "start:fast": "electron .",
+    "dist:win": "npm run build && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.3",
+    "jszip": "^3.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "electron": "^30.5.1",
+    "typescript": "^5.4.5",
+    "vite": "^5.4.21",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.karinistakenxd.bmstoosumaniahitsound",
+    "productName": "BMS to osu!mania Hitsound",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "artifactName": "BMS-to-osu-mania-Hitsound-${version}-${arch}.${ext}",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BMS to osu!mania Hitsound"
+    }
+  }
+}
