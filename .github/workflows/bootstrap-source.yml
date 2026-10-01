@@ -1,10 +1,38 @@
-name: Bootstrap complete source (disabled)
+name: Restore complete source
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
 
 jobs:
-  disabled:
+  restore-source:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Superseded bootstrap workflow"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct and restore project
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat bootstrap/source-xz.part*.b64 | tr -d '\r\n' | base64 -d > /tmp/source.tar.xz
+          echo "3a143e08accb02480170bfc49f678e09990ea9fde6db9623f92b1693a087a54d  /tmp/source.tar.xz" | sha256sum -c -
+          mkdir -p /tmp/restored
+          tar -xJf /tmp/source.tar.xz -C /tmp/restored
+          cp -a /tmp/restored/. .
+          rm -rf bootstrap payload
+          rm -f .github/workflows/bootstrap-source.yml
+          rm -f .github/workflows/bootstrap-and-build.yml
+          rm -f .github/workflows/archive-diagnostics.yml
+
+      - name: Commit complete project
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Publish complete project source" || exit 0
+          git push
