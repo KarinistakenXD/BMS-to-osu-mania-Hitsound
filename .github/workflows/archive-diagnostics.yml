@@ -1,0 +1,25 @@
+name: Archive diagnostics
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check source archive chunks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          wc -c bootstrap/source-xz.part*.b64
+          sha256sum bootstrap/source-xz.part*.b64
+          for f in bootstrap/source-xz.part*.b64; do
+            printf '%s head=' "$f"; head -c 24 "$f"; echo
+            printf '%s tail=' "$f"; tail -c 24 "$f"; echo
+          done
+          cat bootstrap/source-xz.part*.b64 | tr -d '\r\n' | base64 -d > /tmp/source.tar.xz
+          wc -c /tmp/source.tar.xz
+          sha256sum /tmp/source.tar.xz
+          xz -t /tmp/source.tar.xz
