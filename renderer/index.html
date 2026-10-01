@@ -1,0 +1,292 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BMS to osu!mania Hitsound</title>
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#181417;
+    --bg-deep:#120f11;
+    --panel:#242024;
+    --panel2:#2c262b;
+    --panel3:#352d33;
+    --panel-hover:#3d333a;
+    --line:#443942;
+    --line-soft:#332b30;
+    --text:#f7f2f5;
+    --muted:#b7aeb4;
+    --muted2:#887f85;
+    --pink0:#ff99c7;
+    --pink1:#ff66ab;
+    --pink2:#eb4791;
+    --pink3:#cc3378;
+    --purple:#8c66ff;
+    --blue:#66ccff;
+    --yellow:#ffcc22;
+    --good:#b3ff66;
+    --danger:#ed7787;
+    --input:#1b171a;
+    --shadow:0 10px 26px #0005;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--bg-deep)}
+  body{
+    margin:0;
+    min-height:100vh;
+    background:
+      linear-gradient(180deg,#3b1f2d 0,#241a20 116px,var(--bg) 116px,var(--bg) 100%);
+    color:var(--text);
+    font:14px/1.45 "Torus",Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  body:before{content:"";position:fixed;inset:0 0 auto;height:3px;background:linear-gradient(90deg,var(--pink1),var(--purple),var(--pink1));z-index:20}
+  .shell{max-width:1280px;margin:auto;padding:22px 24px 32px}
+  .top{
+    min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:18px;
+    margin-bottom:18px;padding:0 4px;
+  }
+  .brand{display:flex;align-items:center;gap:13px;min-width:0}
+  .brand-orb{display:grid;place-items:center;width:54px;height:54px;flex:0 0 54px;padding:0;border-radius:50%;background:var(--pink1);color:#fff;font-size:18px;font-weight:800;letter-spacing:-1px;box-shadow:0 0 0 5px #ffffff12,0 6px 20px #0006;animation:bmsPulse 1s ease-in-out infinite;transform-origin:center;position:relative;z-index:2}.brand-orb:hover:not(:disabled){background:var(--pink0);transform:none}.brand-orb:active:not(:disabled){transform:scale(.94)}
+  #bms-snow-layer{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:50}.bms-flake{position:absolute;top:-24px;color:var(--pink0);font-weight:800;font-size:12px;text-shadow:0 0 7px #ff66ab88;animation:bmsSnow linear forwards;user-select:none}
+  @keyframes bmsPulse{0%,100%{box-shadow:0 0 0 5px #ffffff12,0 6px 20px #0006;transform:scale(1)}50%{box-shadow:0 0 0 7px #ff66ab22,0 0 24px #ff66ab55,0 6px 20px #0006;transform:scale(1.045)}}
+  @keyframes bmsSnow{0%{transform:translate3d(0,-15px,0) rotate(0deg);opacity:0}10%{opacity:.95}100%{transform:translate3d(var(--drift),105vh,0) rotate(var(--spin));opacity:0}}
+  .brand h1{font-size:24px;margin:0;letter-spacing:-.55px;font-weight:750}
+  .brand p{color:#d1c5cc;margin:2px 0 0;font-size:13px}
+  .badge{
+    border:0;background:#ffffff0e;padding:8px 12px;border-radius:999px;color:#eadfe5;font-size:11px;
+    text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;box-shadow:inset 0 0 0 1px #ffffff12;
+  }
+  .layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(330px,.72fr);gap:14px}.stack{display:grid;gap:14px;align-content:start}
+  .card{background:var(--panel);border:0;border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+  .card-head{
+    min-height:48px;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 15px;
+    background:var(--panel3);border-bottom:3px solid var(--pink2);font-weight:720;font-size:14px;
+  }
+  .card-head small{font-weight:500;color:var(--muted);font-size:11px}
+  .card-body{padding:15px}
+  .picker{display:grid;grid-template-columns:148px minmax(0,1fr);gap:9px;align-items:center;margin-bottom:9px}
+  .path{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#d0c5cb;background:var(--input);padding:9px 11px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line-soft)}
+  button{
+    appearance:none;border:0;background:#41373e;color:#fff;border-radius:7px;padding:9px 12px;font-weight:700;cursor:pointer;
+    transition:background .12s,transform .12s,filter .12s;box-shadow:inset 0 -2px #0003;
+  }
+  button:hover:not(:disabled){transform:translateY(-1px);background:#54454e}
+  button:active:not(:disabled){transform:translateY(0);filter:brightness(.92)}
+  button:disabled{opacity:.38;cursor:not-allowed}
+  .primary{background:var(--pink2);box-shadow:inset 0 -2px #9e2760}.primary:hover:not(:disabled){background:var(--pink1)}
+  .success{background:var(--pink2);box-shadow:inset 0 -2px #9e2760}.success:hover:not(:disabled){background:var(--pink1)}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.spacer{flex:1}.field{display:flex;gap:7px;align-items:center;color:var(--muted);font-size:12px}.field strong{color:var(--text);font-weight:650}
+  input[type=number],select{background:var(--input);color:var(--text);border:0;border-radius:6px;padding:8px 9px;box-shadow:inset 0 0 0 1px var(--line)}
+  input[type=number]:focus,select:focus{outline:2px solid #eb479155;box-shadow:inset 0 0 0 1px var(--pink2)}
+  input[type=number]{width:78px}select{min-width:130px}.wide-select{width:100%;min-width:0}
+  input[type=checkbox]{accent-color:var(--pink2)}
+  .wave-wrap{position:relative;margin-top:13px;height:172px;background:#161216;border-radius:8px;overflow:hidden;cursor:pointer;box-shadow:inset 0 0 0 1px #382d34}
+  .wave-wrap:before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent 24.7%,#ffffff09 25%,transparent 25.3%,transparent 49.7%,#ffffff09 50%,transparent 50.3%,transparent 74.7%,#ffffff09 75%,transparent 75.3%);pointer-events:none}
+  #waveform{width:100%;height:100%;display:block}.playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--pink0);box-shadow:0 0 10px #ff66aaaa;pointer-events:none;left:0}.wave-label{position:absolute;left:10px;top:8px;color:#c1b6bd;font-size:10px;letter-spacing:.08em;pointer-events:none;text-transform:uppercase}
+  .timeline{display:grid;grid-template-columns:45px 1fr 45px;gap:9px;align-items:center;margin-top:9px;font-variant-numeric:tabular-nums;color:var(--muted)}
+  input[type=range]{width:100%;accent-color:var(--pink2)}
+  .transport{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}.transport .divider{width:1px;height:27px;background:var(--line);margin:0 2px}
+  .section{padding:13px 0;border-bottom:1px solid var(--line-soft)}.section:first-child{padding-top:0}.section:last-child{padding-bottom:0;border-bottom:0}.section-title{font-weight:720;margin-bottom:7px}.section-sub{color:var(--muted);font-size:11px;margin-top:-3px;margin-bottom:9px}.checks{display:grid;gap:10px}.check{display:flex;align-items:flex-start;gap:9px;color:#eee5ea}.check input{margin-top:3px}.hint{font-size:11px;color:var(--muted);margin-top:2px}
+  .slider-row{display:grid;grid-template-columns:1fr 52px;gap:9px;align-items:center;margin-top:9px}.slider-copy{display:flex;justify-content:space-between;gap:10px;align-items:center}.slider-copy span:first-child{color:#f0e7ec}.slider-copy small{color:var(--muted)}output{font-variant-numeric:tabular-nums;text-align:right;color:#f4dce8;font-weight:700}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:9px}.status{margin-top:12px;padding:11px 12px;background:#1a1518;border-left:3px solid var(--pink2);border-radius:5px;color:#c9bec5;font-size:11px}.tool-status{margin-top:9px;padding:9px 10px;border-radius:6px;font-size:11px;background:#1a1518}.tool-status.neutral{color:#c5bbc1}.tool-status.good{color:#d7ffb1;border-left:3px solid #b3ff66}.tool-status.warn{color:#ffe291;border-left:3px solid #ffcc22}
+  .note-preview-wrap{position:relative;height:360px;background:#141013;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px #382d34}
+  #note-preview{width:100%;height:100%;display:block}.note-overlay{position:absolute;inset:0;pointer-events:none}.note-preview-label{position:absolute;left:10px;top:8px;color:#c1b6bd;font-size:10px;letter-spacing:.08em;text-transform:uppercase}.note-preview-info{position:absolute;right:10px;top:8px;color:#dacbd3;font-size:10px;font-variant-numeric:tabular-nums;text-align:right}
+  .note-legend{display:flex;gap:13px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:10px}.legend-item{display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:9px;height:9px;border-radius:50%}.legend-converted{background:var(--pink1)}.legend-target{background:var(--purple)}.legend-bgm{border:1px solid var(--yellow);background:#5a4212}
+  .disabled{opacity:.45}.log{height:235px;overflow:auto;background:#141013;color:#d9cbd2;font:11px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;padding:12px;border-radius:7px;box-shadow:inset 0 0 0 1px #342a30}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#ffffff0b;border-radius:999px;padding:5px 8px;color:#d6c8d0;font-size:10px}.dot{width:7px;height:7px;border-radius:50%;background:var(--pink1);box-shadow:0 0 8px #ff66aa99}
+
+  .metronome-model{margin-top:12px;padding:10px 12px 9px;background:#171216;border-radius:8px;box-shadow:inset 0 0 0 1px #3a2d35;transition:opacity .16s,filter .16s}
+  .metronome-model.is-disabled{opacity:.38;filter:saturate(.5)}
+  .metronome-stage{position:relative;height:112px;display:grid;place-items:center;overflow:hidden}
+  .metronome-glow{position:absolute;left:50%;bottom:10px;width:92px;height:92px;margin-left:-46px;border-radius:50%;background:radial-gradient(circle,#ff99c766 0,#ff66ab33 34%,transparent 72%);opacity:0;transform:scale(.58);pointer-events:none}
+  .metronome-body{position:relative;width:94px;height:88px;clip-path:polygon(28% 100%,72% 100%,63% 10%,37% 10%);background:linear-gradient(180deg,#49323f 0,#2b2027 55%,#1d171b 100%);box-shadow:0 10px 22px #0008}
+  .metronome-body:after{content:"";position:absolute;inset:7px 12px 8px;background:linear-gradient(180deg,#ffffff0b,transparent);clip-path:inherit}
+  .metronome-stick{position:absolute;left:50%;bottom:18px;width:4px;height:80px;border-radius:999px;background:linear-gradient(180deg,#ffd4e7,var(--pink1) 42%,#c52f73);transform:translateX(-50%) rotate(0deg);transform-origin:50% calc(100% - 4px);transition-property:transform;transition-timing-function:cubic-bezier(.22,.75,.24,1);transition-duration:.3s;z-index:4;box-shadow:0 0 8px #ff66aa44}
+  .metronome-weight{position:absolute;left:50%;top:21px;width:22px;height:11px;border-radius:4px;transform:translateX(-50%);background:#f7e8ef;box-shadow:0 2px 6px #0008,0 0 0 1px #ffffff33}
+  .metronome-pivot{position:absolute;left:50%;bottom:13px;width:14px;height:14px;transform:translateX(-50%);border-radius:50%;background:var(--pink1);box-shadow:0 0 0 4px #ff66ab1f,0 0 13px #ff66ab77;z-index:6}
+  .metronome-model.metronome-pulse .metronome-glow{animation:metronomeGlow .34s ease-out}
+  .metronome-model.metronome-pulse .metronome-pivot{animation:metronomePivot .34s ease-out}
+  .metronome-model.metronome-accent .metronome-stick{box-shadow:0 0 14px #ffcc22aa}
+  .metronome-model.metronome-accent .metronome-pivot{background:var(--yellow)}
+  .metronome-readout{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:2px;color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-variant-numeric:tabular-nums}
+  .metronome-readout strong{color:#f4e8ee;font-size:11px}
+  .metronome-beat-bar{display:flex;gap:6px;justify-content:center;margin:9px auto 1px;min-height:13px}.meter-beat{width:13px;height:8px;border-radius:999px;background:#ffffff12;box-shadow:inset 0 0 0 1px #ffffff14;transition:background .08s,box-shadow .08s,transform .08s}.meter-beat.active{background:var(--pink1);box-shadow:0 0 9px #ff66ab88;transform:translateY(-1px)}.meter-beat.accent.active{background:var(--yellow);box-shadow:0 0 10px #ffcc2299}
+  @keyframes metronomeGlow{0%{opacity:0;transform:scale(.58)}18%{opacity:1;transform:scale(.96)}100%{opacity:0;transform:scale(1.2)}}
+  @keyframes metronomePivot{0%{transform:translateX(-50%) scale(1)}20%{transform:translateX(-50%) scale(1.32)}100%{transform:translateX(-50%) scale(1)}}
+
+  .preview-inspector{display:grid;grid-template-columns:1.15fr .9fr 1.15fr;gap:9px;margin-top:10px}.mini-panel{min-width:0;background:#1a1518;border-radius:8px;padding:10px;box-shadow:inset 0 0 0 1px var(--line-soft)}.mini-panel>b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#eadce4;margin-bottom:8px}.mini-file{display:grid;grid-template-columns:38px minmax(0,1fr);gap:6px;align-items:center;margin-top:5px;font-size:10px}.mini-file>span{color:var(--pink0);font-weight:800}.mini-file>div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}.key-visualizer{display:flex;justify-content:center;align-items:flex-end;gap:2px;height:54px;padding:5px;background:#120f11;border-radius:6px;overflow:hidden}.key-cap{height:42px;flex:0 1 20px;min-width:5px;max-width:20px;border-radius:3px 3px 5px 5px;background:#30272d;border:1px solid #493a43;transition:background .06s,box-shadow .06s,transform .06s}.key-cap.active{background:var(--pink1);box-shadow:0 0 8px #ff66ab88;transform:translateY(2px)}
+  @media(max-width:900px){.layout{grid-template-columns:1fr}.preview-inspector{grid-template-columns:1fr}.shell{padding:14px}.picker{grid-template-columns:1fr}.top{align-items:flex-start}.two-col{grid-template-columns:1fr}.brand-orb{width:46px;height:46px;flex-basis:46px;font-size:16px}}
+</style>
+</head>
+<body>
+<div id="bms-snow-layer"></div>
+<div class="shell">
+  <div class="top">
+    <div class="brand"><button id="brand-orb" class="brand-orb" type="button" title="BPM pulse · click for bms! snow">bms!</button><div><h1>BMS to osu!mania Hitsound</h1><p>Aligns BMS keysounds to an existing osu!mania beatmap, verifies timing, previews the result, and exports every audible BMS layer as playable hitsounds.</p></div></div>
+    <div class="badge">sync · preview · sample export</div>
+  </div>
+
+  <div class="layout">
+    <div class="stack">
+      <main class="card">
+        <div class="card-head"><span>Source & target</span><small>target .osu audio stays authoritative</small></div>
+        <div class="card-body">
+          <div class="picker"><button id="btn-pick-bms">Select BMS chart</button><div class="path" id="path-bms">No BMS selected</div></div>
+          <div class="picker"><button id="btn-pick-osu">Select target .osu</button><div class="path" id="path-osu">No osu! map selected</div></div>
+          <div class="controls">
+            <button class="primary" id="btn-load" disabled>Analyze & synchronize</button>
+            <div class="spacer"></div>
+            <label class="field">Keys <input id="keys" type="number" value="18" min="1" max="18"></label>
+          </div>
+
+          <div class="wave-wrap" id="wave-wrap">
+            <canvas id="waveform"></canvas>
+            <div class="wave-label">target osu audio reference</div>
+            <div class="playhead" id="playhead"></div>
+          </div>
+          <div class="timeline"><span id="time-current">0:00</span><input id="timeline" type="range" min="0" max="100" value="0" step="0.01" disabled><span id="time-total">0:00</span></div>
+
+          <div class="transport">
+            <button id="btn-play" disabled>▶ Preview</button><button id="btn-pause" disabled>Ⅱ Pause</button>
+            <span class="divider"></span>
+            <label class="field">Preview <select id="preview-mode">
+              <option value="target-plus-keys" selected>osu audio + converted hitsounds</option>
+              <option value="target-only">osu audio only</option>
+              <option value="bms-reference">BMS reference only</option>
+              <option value="keys-only">converted hitsounds only</option>
+            </select></label>
+            <label class="field">Rate <select id="playback-rate">
+              <option value="0.25">0.25×</option><option value="0.5">0.50×</option><option value="0.75">0.75×</option><option value="1" selected>1.00×</option>
+            </select></label>
+          </div>
+        </div>
+      </main>
+
+      <section class="card">
+        <div class="card-head">
+          <span>Note preview</span>
+          <div class="controls">
+            <label class="field">Scroll speed <input id="note-preview-speed" type="range" min="15" max="40" step="1" value="28"><output id="note-preview-speed-out">28</output></label>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="note-preview-wrap">
+            <canvas id="note-preview"></canvas>
+            <div class="note-overlay">
+              <div class="note-preview-label">mania timeline · notes fall toward judgment</div>
+              <div class="note-preview-info" id="note-preview-info">Analyze maps to preview notes</div>
+            </div>
+          </div>
+          <div class="preview-inspector">
+            <div class="mini-panel">
+              <b>Loaded files</b>
+              <div class="mini-file"><span>BMS</span><div id="file-summary-bms">No BMS selected</div></div>
+              <div class="mini-file"><span>osu!</span><div id="file-summary-osu">No osu! map selected</div></div>
+            </div>
+            <div class="mini-panel">
+              <b>Comparison</b>
+              <select id="note-preview-mode" class="wide-select">
+                <option value="converted" selected>Converted BMS</option>
+                <option value="target">Target osu! difficulty</option>
+                <option value="overlay">Overlay comparison</option>
+              </select>
+              <div class="note-legend">
+                <span class="legend-item"><span class="legend-swatch legend-converted"></span>Converted</span>
+                <span class="legend-item"><span class="legend-swatch legend-target"></span>Target</span>
+                <span class="legend-item"><span class="legend-swatch legend-bgm"></span>BMS layer</span>
+              </div>
+            </div>
+            <div class="mini-panel">
+              <b>Key monitor</b>
+              <div id="key-visualizer" class="key-visualizer" aria-label="Converted key activity"></div>
+              <div class="hint">Follows the automatic output keymode. Keys flash at the NOW line.</div>
+            </div>
+          </div>
+          <div class="hint" style="margin-top:8px">Spacebar toggles play/pause. Notes disappear exactly at the judgment line.</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><span>Activity</span><span class="chip"><span class="dot"></span>diagnostics</span></div>
+        <div class="card-body"><div id="log" class="log"></div></div>
+      </section>
+    </div>
+
+    <aside class="stack">
+      <section class="card">
+        <div class="card-head">Preview mixer</div>
+        <div class="card-body">
+          <div class="section">
+            <div class="slider-copy"><span>Hitsound sample volume</span><small>preview + .osu output</small></div>
+            <div class="slider-row"><input id="hitsound-volume" type="range" min="1" max="100" value="100"><output id="hitsound-volume-out">100%</output></div>
+          </div>
+          <div class="section">
+            <div class="slider-copy"><span>Audio volume</span><small>preview comparison only</small></div>
+            <div class="slider-row"><input id="audio-volume" type="range" min="0" max="100" value="70"><output id="audio-volume-out">70%</output></div>
+          </div>
+          <div class="section">
+            <label class="check"><input id="metronome-enabled" type="checkbox" checked><span><b>Metronome</b><div class="hint">Slow preview uses tempo-only processing for the song and the complete BMS hitsound bus so they stay aligned.</div></span></label>
+            <label class="field" style="margin-top:9px">Timing source <select id="metronome-source" class="wide-select">
+              <option value="osu" selected>Target osu red timing points</option>
+              <option value="bms">BMS native BPM / STOP timing</option>
+            </select></label>
+            <div id="metronome-model" class="metronome-model" aria-label="Visual metronome">
+              <div class="metronome-stage">
+                <div id="metronome-glow" class="metronome-glow"></div>
+                <div class="metronome-body"></div>
+                <div id="metronome-stick" class="metronome-stick"><span class="metronome-weight"></span></div>
+                <div class="metronome-pivot"></div>
+              </div>
+              <div class="metronome-readout"><strong id="metronome-bpm">— BPM</strong><span id="metronome-beat-label">ready</span></div><div id="metronome-beat-bar" class="metronome-beat-bar" aria-label="Meter beat indicator"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">Conversion behavior</div>
+        <div class="card-body">
+          <div class="checks">
+            <label class="check"><input id="resnap" type="checkbox" checked><span><b>Re-snap after audio sync</b><div class="hint">Uses the selected .osu hitobjects first, then preserves the native BMS rhythmic phase when no target note exists.</div></span></label>
+            <label class="field">Resnap strategy <select id="resnap-mode" class="wide-select"><option value="thorough" selected>Thorough · target + native BMS phase</option><option value="fast">Fast · conservative target capture</option></select></label>
+            <label class="field">Base tolerance <input id="snap-tolerance" type="number" value="14" min="0" max="50"> ms</label>
+          </div>
+          <div class="status" id="sync-status">Select both files, then analyze. The target .osu audio is the default synchronization and preview reference.</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">Sample export</div>
+        <div class="card-body">
+          <div class="section">
+            <div class="section-title">Format</div>
+            <div class="section-sub">Samples are copied into the target beatmap folder automatically.</div>
+            <select id="sample-format" class="wide-select">
+              <option value="ogg" selected>Convert / recompress to OGG</option>
+              <option value="original">Keep original format</option>
+            </select>
+          </div>
+          <div class="section" id="ogg-options">
+            <div class="slider-copy"><span>OGG quality</span><small>lower = smaller</small></div>
+            <div class="slider-row"><input id="ogg-quality" type="range" min="-1" max="6" step="0.5" value="3"><output id="ogg-quality-out">q3.0</output></div>
+            <div class="hint">Vorbis quality 3 is a modest space-saving default for keysounds.</div>
+            <div id="ffmpeg-status" class="tool-status neutral">Checking FFmpeg…</div>
+          </div>
+          <div class="section">
+            <div class="section-title">If a filename already exists</div>
+            <select id="sample-conflict" class="wide-select">
+              <option value="skip" selected>Keep existing file (do not replace)</option>
+              <option value="replace">Replace existing file</option>
+            </select>
+            <div class="hint" style="margin-top:7px">Different BMS samples that happen to share one basename are automatically disambiguated with their WAV id.</div>
+          </div>
+          <button class="success" id="btn-convert" style="width:100%;margin-top:12px" disabled>Convert difficulty + export samples</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+<script type="module" src="./renderer.ts"></script>
+</body>
+</html>

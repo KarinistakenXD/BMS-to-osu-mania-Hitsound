@@ -151,7 +151,7 @@ npm install
 npm run dist:win
 ```
 
-Release files are written to `release/` and include an NSIS installer plus a portable executable.
+Release files are written to `release/` and include an x64 NSIS installer executable.
 
 The GitHub workflow runs on pushes to `main`, can be started manually, and publishes build artifacts. Tags matching `v*` (for example `v1.0.0`) also create a GitHub Release with the generated `.exe` files attached.
 
