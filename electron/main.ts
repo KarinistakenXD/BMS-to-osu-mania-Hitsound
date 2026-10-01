@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 
 import { BmsFileParser } from "../src/core/bms-parser";
 import { BmsTimingEngine } from "../src/core/bms-timing";
+import { readOsuPreview } from "../src/core/osu-preview";
 import { NodeFileSource } from "../src/core/node-io";
 
 let win: BrowserWindow | null = null;
@@ -122,30 +123,18 @@ ipcMain.handle("dialog:pairCheck", async (_e, options: {
 /* ------------------------------------------------------------------ */
 /* Parse & Sync Timing                                                 */
 /* ------------------------------------------------------------------ */
+ipcMain.handle("core:readOsuPreview", async (_e, { osuPath, bmsPath }) => {
+  try { return await readOsuPreview(osuPath, bmsPath); } catch { return null; }
+});
+
 ipcMain.handle("core:parseMapData", async (_e, { bmsPath, osuPath }) => {
   try {
-    const osuText = await fs.readFile(osuPath, "utf-8");
-    const audioMatch = osuText.match(/^\s*AudioFilename\s*:\s*(.+?)\s*$/mi);
-    let osuAudioPath: string | null = null;
-    if (audioMatch?.[1]) {
-      const rawAudio = audioMatch[1].trim().replace(/^"|"$/g, "");
-      osuAudioPath = path.resolve(path.dirname(osuPath), rawAudio);
-      try { await fs.access(osuAudioPath); } catch {
-        log(`[WARN] Target osu audio was not found: ${osuAudioPath}`);
-      }
-    } else {
-      log("[WARN] Target .osu has no AudioFilename entry; audio synchronization is unavailable.");
-    }
-
+    const target = await readOsuPreview(osuPath, bmsPath);
+    const { osuAudioPath, timingPoints } = target;
+    const osuMeta = target.metadata;
     const fsSource = new NodeFileSource();
     const parser = new BmsFileParser();
     const bms = await parser.parse(fsSource, bmsPath);
-    const osuMeta = {
-      title: (osuText.match(/^\s*Title\s*:\s*(.*?)\s*$/mi)?.[1] ?? "").trim(),
-      artist: (osuText.match(/^\s*Artist\s*:\s*(.*?)\s*$/mi)?.[1] ?? "").trim(),
-      creator: (osuText.match(/^\s*Creator\s*:\s*(.*?)\s*$/mi)?.[1] ?? "").trim(),
-      version: (osuText.match(/^\s*Version\s*:\s*(.*?)\s*$/mi)?.[1] ?? "").trim(),
-    };
     const bmsMeta = {
       title: (bms.header.title ?? "").trim(),
       artist: (bms.header.artist ?? "").trim(),
@@ -180,56 +169,6 @@ ipcMain.handle("core:parseMapData", async (_e, { bmsPath, osuPath }) => {
       files[id] = path.join(baseDir, filename);
     }
 
-    // Target osu! difficulty metadata + hitobjects for visual note preview.
-    // This does not alter conversion; it only lets the renderer compare the
-    // generated hitsound diff against the selected target difficulty.
-    const mode = Number(osuText.match(/^\s*Mode\s*:\s*(\d+)\s*$/mi)?.[1] ?? 0);
-    const targetKeys = Math.max(1, Math.round(Number(osuText.match(/^\s*CircleSize\s*:\s*([\d.]+)\s*$/mi)?.[1] ?? 4)));
-    const hitObjectSection = osuText.match(/\[HitObjects\]([\s\S]*?)(?:\n\[|$)/)?.[1] ?? "";
-    const targetNotes = mode === 3
-      ? hitObjectSection
-          .split(/\r?\n/)
-          .map(line => line.trim())
-          .filter(line => line && !line.startsWith("//"))
-          .map(line => {
-            const parts = line.split(",");
-            if (parts.length < 5) return null;
-            const x = Number(parts[0]);
-            const timeMs = Number(parts[2]);
-            const type = Number(parts[3]);
-            if (!Number.isFinite(x) || !Number.isFinite(timeMs) || !Number.isFinite(type)) return null;
-            const isCircle = (type & 1) !== 0;
-            const isHold = (type & 128) !== 0;
-            if (!isCircle && !isHold) return null;
-            const lane = Math.max(0, Math.min(targetKeys - 1, Math.floor((x * targetKeys) / 512)));
-            let endTimeMs = timeMs;
-            if (isHold && parts[5]) {
-              const holdEnd = Number(parts[5].split(":")[0]);
-              if (Number.isFinite(holdEnd) && holdEnd >= timeMs) endTimeMs = holdEnd;
-            }
-            return { timeMs, endTimeMs, lane };
-          })
-          .filter((n): n is { timeMs: number; endTimeMs: number; lane: number } => n !== null)
-          .sort((a, b) => a.timeMs - b.timeMs)
-      : [];
-
-    // Target osu! red timing points. These are authoritative for target-grid
-    // resnapping and the default metronome.
-    const timingPoints = osuText
-      .match(/\[TimingPoints\]([\s\S]*?)(?:\n\[|$)/)?.[1]
-      ?.split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith("//"))
-      .map(line => line.split(","))
-      .filter(parts => parts.length >= 2 && (parts[6] ?? "1") === "1")
-      .map(parts => ({
-        timeMs: Number(parts[0]),
-        beatLength: Number(parts[1]),
-        meter: Math.max(1, Number(parts[2]) || 4),
-      }))
-      .filter(tp => Number.isFinite(tp.timeMs) && Number.isFinite(tp.beatLength) && tp.beatLength > 0)
-      .sort((a, b) => a.timeMs - b.timeMs) ?? [];
-
     // A native BMS beat grid. This is intentionally separate from the target
     // osu timing and is offered only as an alternate metronome source. It uses
     // the BMS timing engine (including BPM changes and STOP integration).
@@ -252,7 +191,8 @@ ipcMain.handle("core:parseMapData", async (_e, { bmsPath, osuPath }) => {
     return {
       notes, files, osuAudioPath, timingPoints, bmsBeatTimes,
       metadata: { bms: bmsMeta, osu: osuMeta },
-      osuPreview: { mode, keys: targetKeys, notes: targetNotes },
+      osuPreview: target.osuPreview,
+      reuseKey: target.reuseKey,
     };
   } catch (err) {
     log(`[ERROR] Parsing failed: ${err instanceof Error ? err.message : String(err)}`);

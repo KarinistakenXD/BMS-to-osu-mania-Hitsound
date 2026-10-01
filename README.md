@@ -65,7 +65,7 @@ The target osu! difficulty can be lower-key, such as 4K. It is timing/reference 
 - Seekable full-song waveform preview.
 - Converted-BMS, target-osu!, and overlay comparison modes.
 - Fixed 18K physical preview-lane width so lower-key target maps stay centered instead of stretching across the full preview.
-- Note-preview speed 15–40, approximately 765 ms down to 287 ms of approach time.
+- Note-preview speed 1–40, approximately 11.48 seconds down to 287 ms of approach time.
 - Notes disappear exactly at the NOW/judgement line, with only a small pre-hit glow.
 - Visual metronome with meter/beat indicators.
 - `bms!` logo BPM pulse and click-particle gimmick.
@@ -82,6 +82,10 @@ The song and keysounds still share the same four-channel FFmpeg transform at
 non-1x rates; volume, seeking, and metronome changes reuse that audio.
 Changing the displayed/output key count only rebuilds the note lane layout;
 it preserves prepared audio and ongoing playback, including during preparation.
+Switching osu difficulties reuses recent analysis when artist, title, complete
+timing data, and the unchanged source audio/BMS file match. The new difficulty's
+notes and key count update immediately. If its hitobjects change resnapped
+keysound timing, only that preview bus is prepared again; audio alignment is reused.
 
 Non-1x preview is treated as one shared timing problem.
 

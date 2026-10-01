@@ -12,6 +12,8 @@ const api = {
   }) => ipcRenderer.invoke("dialog:pairCheck", options),
   parseMapData: (bmsPath: string, osuPath: string) =>
     ipcRenderer.invoke("core:parseMapData", { bmsPath, osuPath }),
+  readOsuPreview: (osuPath: string, bmsPath: string) =>
+    ipcRenderer.invoke("core:readOsuPreview", { osuPath, bmsPath }),
   readAudioFile: (filePath: string) =>
     ipcRenderer.invoke("file:readAudio", filePath),
   ffmpegStatus: () => ipcRenderer.invoke("tools:ffmpegStatus"),

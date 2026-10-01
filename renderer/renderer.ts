@@ -32,6 +32,7 @@ type NotePreviewMode = "converted" | "target" | "overlay";
 type ResnapMode = "fast" | "thorough";
 
 const state = {
+  analyzedReuseKey: "",
   bmsPath: "",
   osuPath: "",
   referenceEvents: [] as Note[],
@@ -107,6 +108,7 @@ const ffmpegStatus = $<HTMLDivElement>("ffmpeg-status");
 const oggOptions = $<HTMLDivElement>("ogg-options");
 
 function invalidateSelectedPair(message = "Selection changed — analyze this BMS / osu pair before previewing or converting."): void {
+  state.analyzedReuseKey = "";
   stopPreview();
   state.sync = null;
   state.compatibilityOk = false;
@@ -148,15 +150,70 @@ btnBms.onclick = async () => {
   }
 };
 btnOsu.onclick = async () => {
+  btnOsu.disabled = true;
+  try {
   const p = await window.bms2osu.selectOsu();
   if (p) {
+    if (await reuseAnalyzedTarget(p)) return;
     state.osuPath = p;
     $<HTMLDivElement>("path-osu").textContent = p;
     fileSummaryOsu.textContent = p.split(/[\\/]/).pop() || p;
     invalidateSelectedPair();
     checkReady();
   }
+  } finally { btnOsu.disabled = false; }
 };
+
+async function reuseAnalyzedTarget(osuPath: string): Promise<boolean> {
+  if (!state.compatibilityOk || !state.sync || !state.targetAudioBuffer || !state.analyzedReuseKey) return false;
+  const bmsPath = state.bmsPath;
+  const generation = preparationGeneration;
+  const target = await window.bms2osu.readOsuPreview(osuPath, bmsPath) as {
+    reuseKey: string;
+    timingPoints: TimingPoint[];
+    metadata: typeof state.metadata.osu;
+    osuPreview: { mode: number; keys: number; notes: TargetPreviewNote[] };
+  } | null;
+  if (!target?.reuseKey || target.reuseKey !== state.analyzedReuseKey ||
+      generation !== preparationGeneration || bmsPath !== state.bmsPath || !state.targetAudioBuffer) return false;
+
+  stopPreview();
+  const previousEvents = outputEvents();
+  const previousLength = state.songLengthMs;
+  state.osuPath = osuPath;
+  state.metadata.osu = target.metadata;
+  state.timingPoints = target.timingPoints;
+  state.targetMode = target.osuPreview.mode;
+  state.targetKeys = target.osuPreview.keys;
+  state.targetNotes = target.osuPreview.notes;
+  state.targetAnchorTimes = [...new Set(state.targetNotes.map(note => note.timeMs))];
+  rebuildPhaseBeatLocks();
+  const nextEvents = outputEvents();
+  state.songLengthMs = Math.max(state.targetAudioBuffer.duration * 1000,
+    state.syncedEvents.reduce((end, note) => Math.max(end, note.timeMs), 0),
+    state.targetNotes.reduce((end, note) => Math.max(end, note.endTimeMs), 0));
+  const audioChanged = previousLength !== state.songLengthMs || previousEvents.length !== nextEvents.length ||
+    previousEvents.some((event, i) => event.timeMs !== nextEvents[i].timeMs || event.wavId !== nextEvents[i].wavId);
+  invalidateConvertedPlacement();
+  if (audioChanged) {
+    invalidatePreviewAudio();
+    if (previousLength !== state.songLengthMs) {
+      state.referenceMixBuffer = null;
+      state.tempoMixBuffers.clear();
+    }
+  }
+  $<HTMLDivElement>("path-osu").textContent = osuPath;
+  fileSummaryOsu.textContent = `${osuPath.split(/[\\/]/).pop() || osuPath} · ${state.targetKeys}K · ${state.targetNotes.length} objects`;
+  timeline.max = String(state.songLengthMs / 1000);
+  timeTotal.textContent = formatTime(state.songLengthMs / 1000);
+  setPosition(Number(timeline.value));
+  btnConvert.disabled = false;
+  checkReady();
+  statusEl.textContent = "Reused the recent audio analysis: artist, title, timing and audio match.";
+  appendLog("Selected difficulty updated without decoding or repeating audio synchronization.");
+  void warmPreview();
+  return true;
+}
 const checkReady = () => btnLoad.disabled = !(state.bmsPath && state.osuPath);
 const formatTime = (sec: number) => `${Math.floor(Math.max(0, sec) / 60)}:${Math.floor(Math.max(0, sec) % 60).toString().padStart(2, "0")}`;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -874,9 +931,9 @@ function drawNotePreview(): void {
   const top = 28;
   const judgmentY = height - 18;
   const bottom = height - 6;
-  const scrollSpeed = clamp(Number(notePreviewSpeed.value) || 28, 15, 40);
+  const scrollSpeed = clamp(Number(notePreviewSpeed.value) || 28, 1, 40);
   // osu!mania-like readable approach window requested by the user:
-  // speed 40 ≈ 287 ms, speed 15 ≈ 765 ms (inverse relationship).
+  // speed 40 ≈ 287 ms, speed 1 ≈ 11.48 s (inverse relationship).
   const horizonMs = 11480 / scrollSpeed;
   const pastMs = 1;
   const nowMs = Number(timeline.value || 0) * 1000;
@@ -1180,7 +1237,7 @@ audioVolume.oninput = refreshVolumeLabels;
 oggQuality.oninput = refreshVolumeLabels;
 sampleFormat.onchange = refreshSampleFormatUi;
 notePreviewMode.onchange = drawNotePreview;
-notePreviewSpeed.oninput = () => { const speed = clamp(Number(notePreviewSpeed.value) || 28, 15, 40); notePreviewSpeedOut.value = `${Math.round(speed)} · ${Math.round(11480 / speed)}ms`; drawNotePreview(); };
+notePreviewSpeed.oninput = () => { const speed = clamp(Number(notePreviewSpeed.value) || 28, 1, 40); notePreviewSpeedOut.value = `${Math.round(speed)} · ${Math.round(11480 / speed)}ms`; drawNotePreview(); };
 keysInput.oninput = () => {
   const min = Math.min(MAX_OUTPUT_KEYS, Math.max(1, state.requiredKeys || 1));
   const value = clamp(Math.round(Number(keysInput.value) || min), min, MAX_OUTPUT_KEYS);
@@ -1190,6 +1247,7 @@ keysInput.oninput = () => {
 };
 
 btnLoad.onclick = async () => {
+  state.analyzedReuseKey = "";
   audioCtx ??= new AudioContext();
   stopPreview();
   btnLoad.disabled = true;
@@ -1217,6 +1275,7 @@ btnLoad.onclick = async () => {
     bmsBeatTimes: number[];
     metadata: { bms: { title: string; artist: string }; osu: { title: string; artist: string; creator: string; version: string } };
     osuPreview: { mode: number; keys: number; notes: TargetPreviewNote[] };
+    reuseKey: string;
   } | null;
   if (!data) {
     appendLog("[ERROR] Could not parse maps.");
@@ -1377,6 +1436,7 @@ btnLoad.onclick = async () => {
   }
 
   state.compatibilityOk = true;
+  state.analyzedReuseKey = data.reuseKey;
   updateAutoKeyBounds();
   fileSummaryBms.textContent = `${state.bmsPath.split(/[\\/]/).pop() || state.bmsPath} · ${state.syncedEvents.length} audible events`;
   fileSummaryOsu.textContent = `${state.osuPath.split(/[\\/]/).pop() || state.osuPath} · ${state.targetKeys}K · ${state.targetNotes.length} objects`;
