@@ -8,7 +8,7 @@
     "build": "vite build && npx tsc -p tsconfig.electron.json",
     "start": "npm run build && electron .",
     "start:fast": "electron .",
-    "dist:win": "npm run build && electron-builder --win --x64"
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
     "iconv-lite": "^0.7.3",
@@ -33,7 +33,7 @@
       "dist-electron/**/*",
       "package.json"
     ],
-    "artifactName": "BMS-to-osu-mania-Hitsound-${version}-${arch}.${ext}",
+    "artifactName": "BMS-to-osu-mania-Hitsound-Setup-${version}-${arch}.${ext}",
     "win": {
       "target": [
         {
@@ -53,6 +53,13 @@
       "shortcutName": "BMS to osu!mania Hitsound",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
-    }
-  }
+    },
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ]
+  },
+  "author": "KarinistakenXD"
 }
