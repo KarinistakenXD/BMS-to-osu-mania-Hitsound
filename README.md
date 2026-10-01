@@ -80,6 +80,8 @@ The button shows Preparing while a new bus or tempo transform is being built.
 Prepared rates are retained until the analyzed files or relevant settings change.
 The song and keysounds still share the same four-channel FFmpeg transform at
 non-1x rates; volume, seeking, and metronome changes reuse that audio.
+Changing the displayed/output key count only rebuilds the note lane layout;
+it preserves prepared audio and ongoing playback, including during preparation.
 
 Non-1x preview is treated as one shared timing problem.
 

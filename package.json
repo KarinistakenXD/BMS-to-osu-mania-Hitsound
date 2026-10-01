@@ -1,6 +1,6 @@
 {
   "name": "bms-to-osu-mania-hitsound",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Audio-align BMS keysounds to osu!mania, preview timing and note placement, and export every audible BMS layer as playable custom hitsounds.",
   "main": "dist-electron/electron/main.js",
   "scripts": {

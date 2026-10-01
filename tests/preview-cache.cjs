@@ -9,7 +9,9 @@ let release;
 const buffer = { numberOfChannels: 4 };
 const context = vm.createContext({
   Map, Promise, Math, Error,
-  preparationGeneration: 1, audioCtx: {}, state: { targetAudioBuffer: buffer },
+  preparationGeneration: 1, convertedPlacementCache: {}, audioCtx: {}, state: { targetAudioBuffer: buffer, convertedMixBuffer: buffer, tempoMixBuffers: new Map(), requiredKeys: 1 },
+  keysInput: { value: '15' }, MAX_OUTPUT_KEYS: 18,
+  clamp: (x, lo, hi) => Math.min(hi, Math.max(lo, x)), drawNotePreview: () => {},
   previewMixBuffer: async () => { renders++; if (release) await release; return buffer; },
   tempoProcessedPairBuffer: async () => { transforms++; return buffer; },
   tempoProcessedBuffer: async () => buffer,
@@ -17,6 +19,8 @@ const context = vm.createContext({
   appendLog: () => {},
 });
 vm.runInContext(ts.transpile(section), context);
+vm.runInContext(ts.transpile(source.slice(source.indexOf('function invalidateConvertedPlacement()'), source.indexOf('function buildConvertedPlacement('))), context);
+vm.runInContext(ts.transpile(source.slice(source.indexOf('keysInput.oninput ='), source.indexOf('btnLoad.onclick ='))), context);
 const run = code => vm.runInContext(code, context);
 (async () => {
   const first = run('preparePreview("target-plus-keys", .75)');
@@ -28,6 +32,13 @@ const run = code => vm.runInContext(code, context);
   await run('preparePreview("target-plus-keys", .5)');
   await run('preparePreview("target-plus-keys", .75)');
   assert.equal(transforms, 2, 'returning to a prepared rate does no tempo work');
+  const generation = run('preparationGeneration');
+  run('keysInput.value = "18"; keysInput.oninput()');
+  await run('preparePreview("target-plus-keys", .75)');
+  assert.equal(run('preparationGeneration'), generation, 'key count is independent of audio generation');
+  assert.equal(transforms, 2, 'changing displayed lanes preserves tempo audio');
+  assert.equal(run('state.convertedMixBuffer'), buffer);
+  assert.equal(run('convertedPlacementCache'), null, 'lane layout alone is invalidated');
   let unblock;
   release = new Promise(resolve => { unblock = resolve; });
   const stale = run('preparePreview("keys-only", .25)');

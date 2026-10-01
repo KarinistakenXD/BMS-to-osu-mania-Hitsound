@@ -124,7 +124,7 @@ function invalidateSelectedPair(message = "Selection changed — analyze this BM
   state.tempoMixBuffers.clear();
   state.requiredKeys = 1;
   state.songLengthMs = 0;
-  invalidateConvertedPlacement();
+  invalidatePreviewAudio();
   timeline.value = "0";
   timeline.disabled = true;
   timeCurrent.textContent = "0:00";
@@ -634,10 +634,14 @@ function updateAutoKeyBounds(): void {
 let convertedPlacementCache: { keys: number; result: { notes: PlacedPreviewNote[]; shifted: number; stacked: number; nearShifted: number; nearConflicts: number } } | null = null;
 let preparationGeneration = 0;
 function invalidateConvertedPlacement(): void {
+  convertedPlacementCache = null;
+}
+
+function invalidatePreviewAudio(): void {
   preparationGeneration++;
   preparedPreviews.clear();
   pendingPreviews.clear();
-  convertedPlacementCache = null;
+  invalidateConvertedPlacement();
   state.convertedMixBuffer = null;
   for (const key of [...state.tempoMixBuffers.keys()]) if ((key.startsWith("converted@") || key.startsWith("pair-converted@"))) state.tempoMixBuffers.delete(key);
 }
@@ -1164,9 +1168,9 @@ waveWrap.onclick = ev => {
 };
 window.addEventListener("resize", () => { drawWaveform(); drawNotePreview(); });
 
-resnap.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); previewSettingsChanged(); };
-snapTolerance.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); previewSettingsChanged(); };
-resnapMode.onchange = () => { invalidateConvertedPlacement(); drawNotePreview(); previewSettingsChanged(); };
+resnap.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSettingsChanged(); };
+snapTolerance.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSettingsChanged(); };
+resnapMode.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSettingsChanged(); };
 previewMode.onchange = previewSettingsChanged;
 metronomeEnabled.onchange = () => { refreshMetronomeUi(); if (previewPlaying) void startPreview(Number(timeline.value)); };
 metronomeSource.onchange = () => { if (previewPlaying) void startPreview(Number(timeline.value)); };
@@ -1192,7 +1196,7 @@ btnLoad.onclick = async () => {
   btnConvert.disabled = true;
   btnPlay.disabled = true;
   state.sync = null;
-  invalidateConvertedPlacement();
+  invalidatePreviewAudio();
   state.audioBuffers.clear();
   state.targetAudioBuffer = null;
   state.stretchedTargetBuffers.clear();
@@ -1289,7 +1293,7 @@ btnLoad.onclick = async () => {
   }
 
   state.syncedEvents = usable.map(n => ({ ...n, sourceTimeMs: n.timeMs, timeMs: mapBmsTime(n.timeMs, state.sync!) }));
-  invalidateConvertedPlacement();
+  invalidatePreviewAudio();
   state.syncedBmsBeatTimes = state.bmsBeatTimes.map(t => mapBmsTime(t, state.sync!));
   const noteEnd = state.syncedEvents.length ? Math.max(...state.syncedEvents.map(n => n.timeMs)) : 0;
   const targetNoteEnd = state.targetNotes.length ? Math.max(...state.targetNotes.map(n => n.endTimeMs)) : 0;

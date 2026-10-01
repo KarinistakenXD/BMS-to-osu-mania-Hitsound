@@ -22,14 +22,26 @@ app.whenReady().then(async () => {
         state.songLengthMs = 8000; state.compatibilityOk = true;
         previewMode.value = 'target-plus-keys'; playbackRate.value = '1';
         metronomeEnabled.checked = false;
-        await warmPreview();
+        keysInput.value = '15';
+        const warming = warmPreview();
+        const generation = preparationGeneration;
+        keysInput.value = '18'; keysInput.dispatchEvent(new Event('input'));
+        await warming;
+        if (btnPlay.disabled || preparationGeneration !== generation) throw new Error('Key change during preparation locked Play');
         const bus = state.convertedMixBuffer;
         if (!bus) throw new Error('Bus not prepared');
+        const ready = preparedPreviews.get(preparationKey('target-plus-keys', 1));
+        keysInput.value = '15'; keysInput.dispatchEvent(new Event('input'));
+        keysInput.value = '18'; keysInput.dispatchEvent(new Event('input'));
+        if (btnPlay.disabled || state.convertedMixBuffer !== bus || preparedPreviews.get(preparationKey('target-plus-keys', 1)) !== ready) throw new Error('Ready key change invalidated audio');
         const started = performance.now();
         await startPreview(0);
         const playMs = performance.now() - started;
         if (!previewPlaying || !targetSource || !keyBusSource) throw new Error('Playback did not start');
         const clock = previewStartedAt;
+        const playingSource = targetSource;
+        keysInput.value = '15'; keysInput.dispatchEvent(new Event('input'));
+        if (!previewPlaying || targetSource !== playingSource || previewStartedAt !== clock) throw new Error('Key change interrupted playback');
         stopPreview();
         const resumed = performance.now();
         await startPreview(2);
@@ -44,7 +56,7 @@ app.whenReady().then(async () => {
     await window.webContents.executeJavaScript(bundled);
     const result = await window.webContents.executeJavaScript('window.smoke()');
     assert(result.playMs < 500 && result.resumeMs < 500);
-    console.log('PASS: Windows Electron/Web Audio prepare, Play, seek/resume, and cancellation', JSON.stringify(result));
+    console.log('PASS: Windows Electron prepare, key changes during preparation/ready/playback, Play, resume, and cancellation', JSON.stringify(result));
     app.exit(0);
   } catch (error) { console.error(error); app.exit(1); }
 });
