@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
         sample.getChannelData(0).fill(.1);
         state.audioBuffers.set('01', analyseBuffer(sample));
         state.files['01'] = 'fixture.wav';
-        const encodedSample = bufferToWavBytes(sample);
+        const encodedSample = audioBufferToWavBytes(sample);
         window.bms2osu.readAudioFile = async () => encodedSample;
         state.syncedEvents = [{ timeMs: 500, wavId: '01', lane: 0, isBgm: false }];
         state.targetMode = 3;
