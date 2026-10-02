@@ -1,5 +1,7 @@
 /// <reference path="./bms2osu.d.ts" />
 
+import { initializeLanguageUi, localize } from "./language-ui";
+
 import { analyseBuffer, mapBmsTime, synchronizeBmsToOsu, type SampleAnalysis, type SyncResult } from "./audio-sync";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -919,11 +921,19 @@ function drawPreviewNote(
     const bodyTop = Math.min(yHead, yEnd);
     const bodyBottom = Math.max(yHead, yEnd);
     ctx.globalAlpha = source === "target" ? .85 : .68;
-    const inset = source === "target" ? w * .225 : w * .2;
+    const inset = source === "target" ? w * .175 : w * .2;
+    if (source === "target") {
+      const silver = ctx.createLinearGradient(x + inset, 0, x + w - inset, 0);
+      silver.addColorStop(0, "#7c838f"); silver.addColorStop(.5, "#b7bec8"); silver.addColorStop(1, "#7c838f");
+      ctx.fillStyle = silver;
+    }
     ctx.fillRect(x + inset, bodyTop, w - inset * 2, Math.max(3, bodyBottom - bodyTop));
     ctx.globalAlpha = 1;
-    if (source === "target" && previewScrollDistance(nowMs, note.endTimeMs) <= horizonMs)
+    if (source === "target" && previewScrollDistance(nowMs, note.endTimeMs) <= horizonMs) {
+      ctx.fillStyle = "#c5cbd3";
       ctx.fillRect(x + inset, yEnd - 1, w - inset * 2, 1); // Slim tail follows the narrower hold body.
+    }
+    ctx.fillStyle = glowColor;
   }
   const noteH = Math.max(5, Math.min(10, laneW * .28));
   ctx.beginPath();
@@ -1037,7 +1047,7 @@ function drawNotePreview(): void {
   ctx.beginPath(); ctx.moveTo(0, judgmentY); ctx.lineTo(width, judgmentY); ctx.stroke();
   ctx.fillStyle = "rgba(255,255,255,.65)";
   ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
-  ctx.fillText("NOW", 7, judgmentY - 6);
+  ctx.fillText(localize("NOW"), 7, judgmentY - 6);
 
   if ((mode === "target" || mode === "overlay") && state.targetMode === 3) {
     for (const note of state.targetNotes) drawPreviewNote(ctx, note, targetKeys, "target", nowMs, horizonMs, pastMs, width, top, judgmentY, bottom);
@@ -2531,6 +2541,8 @@ function viewScrollStep(timeMs: number, direction = 1): number {
   return (activeTimingPoint(timeMs)?.beatLength ?? 500) / viewDivision() / 1000;
 }
 $("view-division").onchange = drawNotePreview;
+initializeLanguageUi(() => drawNotePreview());
+
 let seekResume = false;
 let seekResumeTimer = 0;
 let seekTransport = 0;

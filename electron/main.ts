@@ -1,3 +1,4 @@
+import { isLanguage, translateText, type Language } from "../src/core/language";
 /**
  * electron/main.ts
  */
@@ -76,27 +77,31 @@ async function setPref(key: string, val: string): Promise<void> {
 /* ------------------------------------------------------------------ */
 /* Dialogs                                                             */
 /* ------------------------------------------------------------------ */
+let uiLanguage: Language = "en";
+const tr = (text: string) => translateText(text, uiLanguage);
+ipcMain.handle("ui:language", (_e, language: unknown) => { if (isLanguage(language)) uiLanguage = language; });
+
 ipcMain.handle("dialog:chartFolder", async (_e, kind) => {
   if (kind !== "bms" && kind !== "osu") throw new Error("Unsupported chart kind");
   const pref = kind === "bms" ? "sourceDir" : "destDir";
-  const result = await dialog.showOpenDialog(win!, { title: `Select ${kind === "bms" ? "BMS" : "osu!mania"} song folder`, defaultPath: await getPref(pref), properties: ["openDirectory"] });
+  const result = await dialog.showOpenDialog(win!, { title: tr(`Select ${kind === "bms" ? "BMS" : "osu!mania"} song folder`), defaultPath: await getPref(pref), properties: ["openDirectory"] });
   if (result.canceled || !result.filePaths[0]) return null;
   try {
     const folder = await readChartFolder(result.filePaths[0], kind);
     for (const warning of folder.warnings) log("[CHART] " + warning);
     if (folder.warnings.length || !folder.charts.length) await dialog.showMessageBox(win!, {
-      type: "warning", title: "Chart folder", message: folder.charts.length ? "Some files were rejected; supported difficulties are available." : "No supported charts found in this folder.",
+      type: "warning", title: tr("Chart folder"), message: tr(folder.charts.length ? "Some files were rejected; supported difficulties are available." : "No supported charts found in this folder."),
       detail: folder.warnings.slice(0, 12).join("\n") || "Choose the song folder containing chart files.",
     });
     if (!folder.charts.length) return null;
     await setPref(pref, folder.folder); return folder;
   } catch (error) {
-    await dialog.showMessageBox(win!, { type: "error", message: "Could not read chart folder", detail: String(error) }); return null;
+    await dialog.showMessageBox(win!, { type: "error", message: tr("Could not read chart folder"), detail: String(error) }); return null;
   }
 });
 ipcMain.handle("dialog:selectBms", async () => {
   const res = await dialog.showOpenDialog(win!, {
-    title: "Select a BMS file",
+    title: tr("Select a BMS file"),
     defaultPath: await getPref("sourceDir"),
     properties: ["openFile"],
     filters: [{ name: "BMS charts", extensions: ["bms", "bme", "bml", "pms", "bmx"] }],
@@ -108,7 +113,7 @@ ipcMain.handle("dialog:selectBms", async () => {
 
 ipcMain.handle("dialog:selectOsu", async () => {
   const res = await dialog.showOpenDialog(win!, {
-    title: "Select Target .osu File",
+    title: tr("Select Target .osu File"),
     defaultPath: await getPref("destDir"),
     properties: ["openFile"],
     filters: [{ name: "osu! beatmap", extensions: ["osu"] }],
@@ -129,10 +134,10 @@ ipcMain.handle("dialog:pairCheck", async (_e, options: {
   const buttons = options.allowContinue ? ["Continue anyway", "Cancel"] : ["OK"];
   const result = await dialog.showMessageBox(win, {
     type: options.kind,
-    title: options.title,
-    message: options.message,
+    title: tr(options.title),
+    message: tr(options.message),
     detail: options.detail,
-    buttons,
+    buttons: buttons.map(tr),
     defaultId: 0,
     cancelId: options.allowContinue ? 1 : 0,
     noLink: true,
@@ -302,13 +307,13 @@ async function promptForFfmpeg(
   for (;;) {
     const result = await dialog.showMessageBox(win, {
       type: "warning",
-      title: "FFmpeg is required",
-      message: `FFmpeg is required for ${reason}.`,
+      title: tr("FFmpeg is required"),
+      message: tr("FFmpeg is required") + `: ${reason}.`,
       detail:
-        "Install FFmpeg with Windows Package Manager, then click Retry.\n\n" +
+        tr("Install FFmpeg with Windows Package Manager, then click Retry.") + "\n\n" +
         WINGET_FFMPEG_COMMAND +
-        "\n\nYou can also set FFMPEG_PATH or place ffmpeg.exe beside the installed app.",
-      buttons: ["Copy winget command", "Retry", "Not now"],
+        "\n\n" + tr("You can also set FFMPEG_PATH or place ffmpeg.exe beside the installed app."),
+      buttons: ["Copy winget command", "Retry", "Not now"].map(tr),
       defaultId: 1,
       cancelId: 2,
       noLink: true,
@@ -319,11 +324,11 @@ async function promptForFfmpeg(
       log(`[INFO] Copied FFmpeg install command: ${WINGET_FFMPEG_COMMAND}`);
       await dialog.showMessageBox(win, {
         type: "info",
-        title: "Command copied",
-        message: "The FFmpeg winget command was copied to your clipboard.",
+        title: tr("Command copied"),
+        message: tr("The FFmpeg winget command was copied to your clipboard."),
         detail:
-          "Paste it into Windows Terminal or PowerShell, wait for installation to finish, then click Retry or use the feature again.",
-        buttons: ["OK"],
+          tr("Paste it into Windows Terminal or PowerShell, wait for installation to finish, then click Retry or use the feature again."),
+        buttons: [tr("OK")],
       });
       return {
         available: false,

@@ -4,7 +4,7 @@
   "description": "Audio-align BMS keysounds to osu!mania, preview timing and note placement, and export every audible BMS layer as playable custom hitsounds.",
   "main": "dist-electron/electron/main.js",
   "scripts": {
-    "test": "node tests/preview-cache.cjs && node tests/preview-holds.cjs && node tests/osu-reuse.cjs && node tests/audio-sync.cjs && node tests/audio-bus.cjs && node tests/manual-sync.cjs && node tests/preview-loading.cjs && node tests/standalone-preview.cjs && node tests/standalone-controls.cjs && node tests/editor-preview.cjs && node tests/preview-scroll.cjs && node tests/chart-folder.cjs && node tests/dense-preview.cjs",
+    "test": "node tests/preview-cache.cjs && node tests/preview-holds.cjs && node tests/osu-reuse.cjs && node tests/audio-sync.cjs && node tests/audio-bus.cjs && node tests/manual-sync.cjs && node tests/preview-loading.cjs && node tests/standalone-preview.cjs && node tests/standalone-controls.cjs && node tests/editor-preview.cjs && node tests/preview-scroll.cjs && node tests/chart-folder.cjs && node tests/dense-preview.cjs && node tests/language.cjs",
     "typecheck:renderer": "tsc --noEmit --skipLibCheck --strict --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM renderer/renderer.ts",
     "dev": "vite",
     "build": "vite build && npx tsc -p tsconfig.electron.json",

@@ -53,6 +53,7 @@
   @keyframes bmsSnow{0%{transform:translate3d(0,-15px,0) rotate(0deg);opacity:0}10%{opacity:.95}100%{transform:translate3d(var(--drift),105vh,0) rotate(var(--spin));opacity:0}}
   .brand h1{font-size:24px;margin:0;letter-spacing:-.55px;font-weight:750}
   .brand p{color:#d1c5cc;margin:2px 0 0;font-size:13px}
+  .language-switch{display:flex;align-items:center;gap:5px;flex-shrink:0;white-space:nowrap}.language-switch button{background:transparent;border:0;box-shadow:none;padding:6px;color:var(--muted);font-size:13px}.language-switch button[aria-pressed="true"]{color:var(--pink0);text-shadow:0 0 9px #ff66ab66}.language-switch button:hover{color:#fff;transform:none}.language-switch span{color:#695760}html:not([lang="en"]) body{font-family:"Segoe UI",Tahoma,"Microsoft YaHei",sans-serif}html:not([lang="en"]) .hint{line-height:1.6}
   .badge{
     border:0;background:#ffffff0e;padding:8px 12px;border-radius:999px;color:#eadfe5;font-size:11px;
     text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;box-shadow:inset 0 0 0 1px #ffffff12;
@@ -131,7 +132,7 @@
 <div class="shell">
   <div class="top">
     <div class="brand"><button id="brand-orb" class="brand-orb" type="button" title="BPM pulse · click for bms! snow">bms!</button><div><h1>BMS to osu!mania Hitsound</h1><p>Aligns BMS keysounds to an existing osu!mania beatmap, verifies timing, previews the result, and exports every audible BMS layer as playable hitsounds.</p></div></div>
-    <div class="badge">sync · preview · sample export</div>
+    <nav class="language-switch" aria-label="Language"><button type="button" data-language="th" lang="th">ไทย</button><span aria-hidden="true">|</span><button type="button" data-language="en" lang="en" aria-pressed="true">English</button><span aria-hidden="true">|</span><button type="button" data-language="zh" lang="zh-CN">中文</button></nav>
   </div>
 
   <div class="layout">

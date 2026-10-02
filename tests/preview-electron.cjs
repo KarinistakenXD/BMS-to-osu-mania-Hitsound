@@ -11,11 +11,14 @@ app.whenReady().then(async () => {
   const window = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
   try {
     const html = fs.readFileSync('renderer/index.html', 'utf8').replace(/<script[^>]*src=[^>]*><\/script>/g, '');
-    await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    await window.webContents.executeJavaScript(`window.bms2osu = { onLog: () => {}, checkFfmpeg: async () => ({ available: false }), ffmpegStatus: async () => ({ available: false }) }; void 0;`);
+    const fixtureHtml = path.join(testData, 'language-preview.html');
+    fs.writeFileSync(fixtureHtml, html);
+    await window.loadFile(fixtureHtml);
+    await window.webContents.executeJavaScript(`localStorage.removeItem("bms2osu-language"); window.bms2osu = { onLog: () => {}, checkFfmpeg: async () => ({ available: false }), ffmpegStatus: async () => ({ available: false }) }; void 0;`);
     const source = fs.readFileSync('renderer/renderer.ts', 'utf8');
     const test = `
       window.smoke = async () => {
+        if (document.documentElement.lang !== "en") throw new Error("English is not the default language");
         audioCtx = new AudioContext();
         state.targetAudioBuffer = audioCtx.createBuffer(2, audioCtx.sampleRate * 8, audioCtx.sampleRate);
         const sample = audioCtx.createBuffer(1, audioCtx.sampleRate / 10, audioCtx.sampleRate);
@@ -125,6 +128,23 @@ app.whenReady().then(async () => {
         state.timingPoints = [{timeMs:0,beatLength:500,meter:4},{timeMs:510,beatLength:250,meter:3}];
         updateVisualMetronome(510,1);
         if (metronomeBeatLabel.textContent !== 'beat 1/3' || !metronomeBeatBar.children[0].classList.contains('active') || activeMetronomeGain.gain.value !== 0) throw new Error('Muted metronome lost visual beat-one reset');
+        const languageSource = targetSource, languageClock = previewStartedAt, languageGeneration = preparationGeneration;
+        const rawLog = logEl.textContent;
+        const diff = document.getElementById('difficulty-osu');
+        const option = new Option('Original 7K · artist title', '/fixture.osu'); diff.replaceChildren(option);
+        for (const locale of ['th', 'zh', 'en']) {
+          document.querySelector('[data-language="' + locale + '"]').click();
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (localStorage.getItem('bms2osu-language') !== locale) throw new Error('Language choice was not saved');
+          if (document.documentElement.lang !== (locale === 'zh' ? 'zh-CN' : locale)) throw new Error('Language did not change');
+          if (!previewPlaying || targetSource !== languageSource || previewStartedAt !== languageClock || preparationGeneration !== languageGeneration) throw new Error('Language change rebuilt or stopped playback');
+          if (logEl.textContent !== rawLog || option.textContent !== 'Original 7K · artist title' || option.value !== '/fixture.osu') throw new Error('Language changed diagnostics or chart metadata');
+          if (locale !== 'en' && document.getElementById('btn-convert').textContent === 'Convert difficulty + export samples') throw new Error('Export control not translated');
+          btnPlay.title = 'Pause preview';
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (locale !== 'en' && btnPlay.title === 'Pause preview') throw new Error('Dynamic title not translated');
+        }
+        if (document.getElementById('btn-convert').textContent !== 'Convert difficulty + export samples') throw new Error('English round trip lost canonical text');
         stopPreview();
         return { playMs, resumeMs, sharedClock: clock > 0, busFrames: bus.length };
       };
