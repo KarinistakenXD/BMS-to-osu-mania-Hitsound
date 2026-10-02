@@ -3,8 +3,8 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const ts = require('typescript');
 const source = fs.readFileSync('renderer/renderer.ts', 'utf8');
-const drawing = source.slice(source.indexOf('function noteY('), source.indexOf('function drawPlayfieldGrid('));
-const context = vm.createContext({ Math, previewScrollDistance: (a,b)=>b-a, MAX_OUTPUT_KEYS: 18, clamp: (x, lo, hi) => Math.min(hi, Math.max(lo, x)) });
+const drawing = source.slice(source.indexOf('function previewNoteColor('), source.indexOf('function drawPlayfieldGrid('));
+const context = vm.createContext({ Math, state: { standaloneKind: null }, previewScrollDistance: (a,b)=>b-a, MAX_OUTPUT_KEYS: 18, clamp: (x, lo, hi) => Math.min(hi, Math.max(lo, x)) });
 vm.runInContext(ts.transpile(drawing), context);
 function draw(timeMs, endTimeMs, nowMs, source = 'target') {
   const bodies = [], heads = [];

@@ -68,9 +68,9 @@
   .picker{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:9px;align-items:center;margin-bottom:9px}
   .difficulty-picker{flex:1 1 210px;min-width:0}.difficulty-picker select{width:100%;min-width:0;max-width:100%}
   .picker>div:first-child{display:flex;align-items:center;gap:8px;white-space:nowrap}
-  #btn-play,#btn-pause{width:40px;height:36px;padding:0;background:transparent;box-shadow:none;transform:none;font-size:21px}
-  #btn-play:hover,#btn-pause:hover{transform:none;box-shadow:0 0 10px #ff66ab55}
-  #btn-play.transport-active,#btn-pause.transport-active{opacity:1;color:#ff99c7;border-color:#ff66ab;box-shadow:0 0 13px #ff66ab88}
+  #btn-play{width:40px;height:36px;padding:0;background:transparent;box-shadow:none;transform:none;font-size:21px}
+  #btn-play:hover:hover{transform:none;box-shadow:0 0 10px #ff66ab55}
+  #btn-play.transport-active.transport-active{opacity:1;color:#ff99c7;border-color:#ff66ab;box-shadow:0 0 13px #ff66ab88}
   .path{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#d0c5cb;background:var(--input);padding:9px 11px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line-soft)}
   button{
     appearance:none;border:0;background:#41373e;color:#fff;border-radius:7px;padding:9px 12px;font-weight:700;cursor:pointer;
@@ -99,7 +99,7 @@
   .preview-loading{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:#141013e8;color:#eadce4;text-align:center;padding:20px}.preview-loading[hidden]{display:none}.preview-loading-spinner{width:24px;height:24px;border:3px solid #493a43;border-top-color:var(--pink1);border-radius:50%;animation:previewSpin .9s linear infinite}@keyframes previewSpin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.preview-loading-spinner{animation:none}}
   .note-preview-wrap{position:relative;height:360px;background:#141013;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px #382d34}
   #note-preview{width:100%;height:100%;display:block}.note-overlay{position:absolute;inset:0;pointer-events:none}.note-preview-label{position:absolute;left:10px;top:8px;color:#c1b6bd;font-size:10px;letter-spacing:.08em;text-transform:uppercase}.note-preview-info{position:absolute;right:10px;top:8px;color:#dacbd3;font-size:10px;font-variant-numeric:tabular-nums;text-align:right}
-  .note-legend{display:flex;gap:13px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:10px}.legend-item{display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:9px;height:9px;border-radius:50%}.legend-converted{background:var(--pink1)}.legend-target{background:var(--purple)}.legend-bgm{border:1px solid var(--yellow);background:#5a4212}
+  .note-legend{display:flex;gap:13px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:10px}.legend-item{display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:9px;height:9px;border-radius:50%}.legend-converted{background:var(--pink1)}.legend-target{background:linear-gradient(90deg,#fff 0 33%,#2fc3f3 33% 66%,#ffda32 66%)}.legend-bgm{border:1px solid var(--yellow);background:#5a4212}
   .disabled{opacity:.45}.log{height:235px;overflow:auto;background:#141013;color:#d9cbd2;font:11px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;padding:12px;border-radius:7px;box-shadow:inset 0 0 0 1px #342a30}
   .chip{display:inline-flex;align-items:center;gap:6px;background:#ffffff0b;border-radius:999px;padding:5px 8px;color:#d6c8d0;font-size:10px}.dot{width:7px;height:7px;border-radius:50%;background:var(--pink1);box-shadow:0 0 8px #ff66aa99}
 
@@ -157,7 +157,7 @@
           <div class="timeline"><span id="time-current">0:00</span><input id="timeline" type="range" min="0" max="100" value="0" step="0.01" disabled><span id="time-total">0:00</span></div>
 
           <div class="transport">
-            <button id="btn-play" title="Play preview" aria-label="Play preview" disabled>▶</button><button id="btn-pause" title="Pause preview" aria-label="Pause preview" disabled>Ⅱ</button>
+            <button id="btn-play" title="Play preview" aria-label="Play preview" disabled>▶</button>
             <span class="divider"></span>
             <label class="field">Preview <select id="preview-mode">
               <option value="target-plus-keys" selected>osu audio + converted hitsounds</option>
@@ -204,8 +204,7 @@
               </select>
               <div class="note-legend">
                 <span class="legend-item"><span class="legend-swatch legend-converted"></span>Converted</span>
-                <span class="legend-item"><span class="legend-swatch legend-target"></span>Target</span>
-                <span class="legend-item"><span class="legend-swatch legend-bgm"></span>BMS layer</span>
+                <span class="legend-item"><span id="legend-original" class="legend-swatch legend-target"></span>Original chart</span>
               </div>
             </div>
             <div class="mini-panel">

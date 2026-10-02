@@ -67,7 +67,6 @@ const btnBms = $<HTMLButtonElement>("btn-pick-bms");
 const btnOsu = $<HTMLButtonElement>("btn-pick-osu");
 const btnLoad = $<HTMLButtonElement>("btn-load");
 const btnPlay = $<HTMLButtonElement>("btn-play");
-const btnPause = $<HTMLButtonElement>("btn-pause");
 const btnConvert = $<HTMLButtonElement>("btn-convert");
 const timeline = $<HTMLInputElement>("timeline");
 const timeCurrent = $<HTMLSpanElement>("time-current");
@@ -139,7 +138,6 @@ function invalidateSelectedPair(message = "Selection changed — analyze this BM
   timeCurrent.textContent = "0:00";
   timeTotal.textContent = "0:00";
   btnPlay.disabled = true;
-  btnPause.disabled = true;
   btnConvert.disabled = true;
   statusEl.textContent = message;
   drawWaveform();
@@ -860,6 +858,14 @@ function previewVisibleEnd(nowMs: number, horizonMs: number): number {
   return hi;
 }
 $("view-sv").onchange = drawNotePreview;
+function previewNoteColor(keys: number, lane: number, source: "converted" | "target"): string {
+  if (source === "converted") return "#ff66ab";
+  const native = state.standaloneKind === "bms";
+  const scratch = native && ((keys === 6 || keys === 8) ? lane === 0 : (keys === 12 || keys === 16) && (lane === 0 || lane === keys / 2));
+  if (scratch) return "#ff855e";
+  if (keys % 2 && lane === Math.floor(keys / 2)) return native ? "#ffba66" : "#ffda32";
+  return Math.min(lane, keys - 1 - lane) % 2 ? (native ? "#4ce0bd" : "#2fc3f3") : (native ? "#fff0cf" : "#ffffff");
+}
 function noteY(timeMs: number, nowMs: number, horizonMs: number, pastMs: number, top: number, judgmentY: number, bottom: number): number {
   if (timeMs >= nowMs) {
     const ratio = Math.min(1, previewScrollDistance(nowMs, timeMs) / horizonMs);
@@ -899,19 +905,9 @@ function drawPreviewNote(
   const yEnd = noteY(note.endTimeMs, nowMs, horizonMs, pastMs, top, judgmentY, bottom);
   const leadMs = note.timeMs - nowMs;
 
-  let glowColor = "rgba(255,102,171,.75)";
-  if (source === "target") {
-    ctx.fillStyle = "rgba(140,102,255,.28)";
-    ctx.strokeStyle = "rgba(178,153,255,.94)";
-    glowColor = "rgba(140,102,255,.72)";
-  } else if (isBgm) {
-    ctx.fillStyle = "rgba(255,204,34,.55)";
-    ctx.strokeStyle = "rgba(255,221,85,.96)";
-    glowColor = "rgba(255,204,34,.78)";
-  } else {
-    ctx.fillStyle = "rgba(255,102,171,.72)";
-    ctx.strokeStyle = "rgba(255,153,199,.96)";
-  }
+  const glowColor = previewNoteColor(keys, note.lane, source);
+  ctx.fillStyle = glowColor;
+  ctx.strokeStyle = source === "converted" && isBgm ? "#ffd0e5" : glowColor;
 
   ctx.save();
   // A small piano-key/ash-like bloom just before contact. Keep it subtle so
@@ -925,13 +921,14 @@ function drawPreviewNote(
   if (isHold) {
     const bodyTop = Math.min(yHead, yEnd);
     const bodyBottom = Math.max(yHead, yEnd);
-    ctx.globalAlpha = source === "target" ? .58 : .68;
-    ctx.fillRect(x + w * .2, bodyTop, w * .6, Math.max(3, bodyBottom - bodyTop));
+    ctx.globalAlpha = source === "target" ? .85 : .68;
+    const inset = source === "target" ? 0 : w * .2;
+    ctx.fillRect(x + inset, bodyTop, w - inset * 2, Math.max(3, bodyBottom - bodyTop));
     ctx.globalAlpha = 1;
   }
   const noteH = Math.max(5, Math.min(10, laneW * .28));
   ctx.beginPath();
-  ctx.roundRect(x, yHead - noteH, w, noteH, Math.min(4, noteH / 2));
+  ctx.roundRect(x, yHead - noteH, w, noteH, source === "target" ? 0 : Math.min(4, noteH / 2));
   ctx.fill();
   ctx.lineWidth = leadMs <= 90 ? 1.55 : 1;
   ctx.stroke();
@@ -1274,10 +1271,11 @@ function pulseVisualMetronome(tickInfo: MetronomeTick, rate: number): void {
 
 function updateVisualMetronome(nowMs: number, rate: number): void {
   if (!metronomeEnabled.checked || !previewPlaying) return;
-  while (visualMetronomeIndex < previewTicksQueue.length && previewTicksQueue[visualMetronomeIndex].timeMs <= nowMs + 10 * rate) {
-    const tickInfo = previewTicksQueue[visualMetronomeIndex++];
-    pulseVisualMetronome(tickInfo, rate);
-  }
+  let latest: MetronomeTick | undefined;
+  while (visualMetronomeIndex < previewTicksQueue.length && previewTicksQueue[visualMetronomeIndex].timeMs <= nowMs + 10 * rate)
+    latest = previewTicksQueue[visualMetronomeIndex++];
+  // A delayed frame updates once instead of forcing a layout for every missed beat.
+  if (latest) pulseVisualMetronome(latest, rate);
 }
 
 function refreshMetronomeUi(): void {
@@ -1549,6 +1547,7 @@ let activeMasterGain: GainNode | null = null;
 let activeTargetGain: GainNode | null = null;
 let activeSampleGain: GainNode | null = null;
 let previewTimer = 0;
+let previewAudioTimer = 0;
 let previewStartedAt = 0;
 let previewStartSec = 0;
 let previewPlaying = false;
@@ -1841,6 +1840,13 @@ function pitchPreservedMetronomeBuffer(input: AudioBuffer, rate: number, accent:
   return output;
 }
 
+function refreshTransportButton(preparing = false): void {
+  btnPlay.textContent = previewPlaying ? "Ⅱ" : "▶";
+  const label = previewPlaying ? "Pause preview" : preparing ? "Preparing audio…" : "Play preview";
+  btnPlay.title = label; btnPlay.setAttribute("aria-label", label);
+  btnPlay.classList.toggle("transport-active", previewPlaying);
+  btnPlay.disabled = !previewPlaying && (preparing || !state.targetAudioBuffer || !state.compatibilityOk);
+}
 function stopPreview(): void {
   transportRequest++;
   if (targetSource) try { targetSource.stop(); } catch {}
@@ -1858,33 +1864,34 @@ function stopPreview(): void {
   previewScheduledUntilSec = 0;
   previewPlaying = false;
   btnPlay.classList.remove("transport-active");
-  btnPause.classList.remove("transport-active");
   resetVisualMetronome();
   activeMasterGain = null;
   activeTargetGain = null;
   activeSampleGain = null;
   cancelAnimationFrame(previewTimer);
-  btnPause.disabled = true;
-  if (state.targetAudioBuffer && state.compatibilityOk) btnPlay.disabled = false;
+  window.clearInterval(previewAudioTimer);
+  previewAudioTimer = 0;
+  refreshTransportButton();
 }
 
-function tick(): void {
+// Audio scheduling follows the audio clock independently of canvas redraws.
+function advancePreviewAudio(): void {
   if (!previewPlaying || !audioCtx) return;
   const rate = currentRate();
-  const elapsed = Math.max(0, audioCtx.currentTime - previewStartedAt);
-  const sec = previewStartSec + elapsed * rate;
+  const sec = previewStartSec + Math.max(0, audioCtx.currentTime - previewStartedAt) * rate;
+  const end = state.songLengthMs / 1000;
+  if (sec >= end - 1e-4) { stopPreview(); setPosition(end); return; }
+  const until = Math.min(end, sec + PREVIEW_LOOKAHEAD_SEC);
+  if (until > previewScheduledUntilSec + .25) schedulePreviewUntil(until, rate);
+}
+function tick(): void {
+  if (!previewPlaying || !audioCtx) return;
+  advancePreviewAudio();
+  if (!previewPlaying) return;
+  const rate = currentRate();
+  const sec = previewStartSec + Math.max(0, audioCtx.currentTime - previewStartedAt) * rate;
   setPosition(sec);
   updateVisualMetronome(sec * 1000, rate);
-
-  const songEndSec = state.songLengthMs / 1000;
-  if (sec >= songEndSec - 1e-4) {
-    setPosition(songEndSec);
-    stopPreview();
-    return;
-  }
-
-  const desiredUntil = Math.min(songEndSec, sec + PREVIEW_LOOKAHEAD_SEC);
-  if (desiredUntil > previewScheduledUntilSec + .25) schedulePreviewUntil(desiredUntil, rate);
   previewTimer = requestAnimationFrame(tick);
 }
 
@@ -1897,36 +1904,38 @@ function previewSampleEvents(mode: PreviewMode): Note[] {
   return outputEvents();
 }
 
-function osuMetronomeTicks(startMs: number, endMs: number): MetronomeTick[] {
+function osuMetronomeTicks(startMs: number, endMs: number, rate = 1): MetronomeTick[] {
   const out: MetronomeTick[] = [];
+  // In extreme BPM sections, preserve beat phase but thin inaudibly dense clicks.
+  // Limit to 20 clicks per real second without changing chart or audio timing.
+  const gap = 50 * rate;
   for (let i = 0; i < state.timingPoints.length; i++) {
     const tp = state.timingPoints[i];
     const segmentEnd = Math.min(endMs, state.timingPoints[i + 1]?.timeMs ?? endMs);
-    const from = Math.max(startMs, tp.timeMs);
-    if (segmentEnd <= from || tp.beatLength <= 0) continue;
-    let beatIndex = Math.max(0, Math.ceil((from - tp.timeMs - 1e-7) / tp.beatLength));
-    for (;; beatIndex++) {
-      const t = tp.timeMs + beatIndex * tp.beatLength;
-      if (t >= segmentEnd - 1e-7 || t >= endMs) break;
-      if (t >= startMs - 1e-7) {
-        const meter = Math.max(1, tp.meter);
-        const beat = ((beatIndex % meter) + meter) % meter;
-        out.push({ timeMs: t, accent: beat === 0, beat, meter });
-      }
+    const from = Math.max(startMs, tp.timeMs, (out.at(-1)?.timeMs ?? -Infinity) + gap);
+    if (segmentEnd <= from || !Number.isFinite(tp.beatLength) || tp.beatLength <= 0) continue;
+    const stride = Math.max(1, Math.ceil(gap / tp.beatLength));
+    const first = Math.max(0, Math.ceil((from - tp.timeMs - 1e-7) / tp.beatLength));
+    const count = Math.min(Math.ceil((segmentEnd - from) / gap) + 1, Math.ceil((segmentEnd - tp.timeMs - first * tp.beatLength) / (stride * tp.beatLength)));
+    for (let n = 0; n < count; n++) {
+      const index = first + n * stride, t = tp.timeMs + index * tp.beatLength;
+      if (!Number.isFinite(t) || t >= segmentEnd - 1e-7 || t < from - 1e-7) continue;
+      const meter = Math.max(1, tp.meter || 4), beat = index % meter;
+      out.push({ timeMs: t, accent: beat === 0, beat, meter });
     }
   }
   return out;
 }
-
-function bmsMetronomeTicks(startMs: number, endMs: number): MetronomeTick[] {
+function bmsMetronomeTicks(startMs: number, endMs: number, rate = 1): MetronomeTick[] {
   const out: MetronomeTick[] = [];
-  let index = 0;
-  for (const t of state.syncedBmsBeatTimes) {
-    if (t < startMs) { index++; continue; }
+  let last = -Infinity;
+  for (let i = 0; i < state.syncedBmsBeatTimes.length; i++) {
+    const t = state.syncedBmsBeatTimes[i];
+    if (t < startMs || t < last + 50 * rate) continue;
     if (t >= endMs) break;
-    const beat = index % 4;
-    out.push({ timeMs: t, accent: beat === 0, beat, meter: 4 });
-    index++;
+    if (!Number.isFinite(t)) continue;
+    const beat = i % 4;
+    out.push({ timeMs: t, accent: beat === 0, beat, meter: 4 }); last = t;
   }
   return out;
 }
@@ -2063,12 +2072,10 @@ async function warmPreview(): Promise<void> {
   if (preparedPreviews.has(key)) {
     showPreviewLoading(key, "Preview ready");
     finishPreviewLoading(key, true);
-    btnPlay.textContent = "▶"; btnPlay.title = "Play preview";
-    btnPlay.disabled = previewPlaying || !state.compatibilityOk;
+    refreshTransportButton();
     return;
   }
-  btnPlay.disabled = true;
-  btnPlay.textContent = "▶"; btnPlay.title = "Preparing audio…";
+  refreshTransportButton(true);
   showPreviewLoading(key, "Preparing synchronized audio and note timing…");
   try {
     await preparePreview(mode, rate);
@@ -2079,8 +2086,7 @@ async function warmPreview(): Promise<void> {
     if (key === preparationKey(previewMode.value as PreviewMode, currentRate())) {
       const ready = preparedPreviews.has(key);
       finishPreviewLoading(key, ready);
-      btnPlay.textContent = "▶"; btnPlay.title = ready ? "Play preview" : "Retry preview";
-      btnPlay.disabled = previewPlaying || !state.compatibilityOk;
+      refreshTransportButton();
     }
   }
 }
@@ -2107,7 +2113,6 @@ async function startPreview(startSec: number): Promise<void> {
   if (startSec >= songEndSec) return;
 
   btnPlay.disabled = true;
-  btnPause.disabled = true;
 
   const key = preparationKey(mode, rate);
   let prepared = preparedPreviews.get(key);
@@ -2120,12 +2125,9 @@ async function startPreview(startSec: number): Promise<void> {
   const { pairedPreview, targetPreview, mixPreview } = prepared;
 
   previewPlaying = true;
-  btnPlay.classList.add("transport-active");
-  btnPause.classList.remove("transport-active");
+  refreshTransportButton();
   previewStartSec = startSec;
   previewStartedAt = audioCtx.currentTime + PREVIEW_START_LEAD_SEC;
-  btnPlay.disabled = true;
-  btnPause.disabled = false;
 
   activeMasterGain = audioCtx.createGain();
   activeMasterGain.gain.value = state.standaloneKind ? currentAudioGain() : 1;
@@ -2173,8 +2175,8 @@ async function startPreview(startSec: number): Promise<void> {
   previewEventIndex = 0;
   previewTicksQueue = metronomeEnabled.checked
     ? ((metronomeSource.value as MetronomeSource) === "bms"
-      ? bmsMetronomeTicks(startSec * 1000, state.songLengthMs + 1)
-      : osuMetronomeTicks(startSec * 1000, state.songLengthMs + 1))
+      ? bmsMetronomeTicks(startSec * 1000, state.songLengthMs + 1, rate)
+      : osuMetronomeTicks(startSec * 1000, state.songLengthMs + 1, rate))
     : [];
   previewTickIndex = 0;
   visualMetronomeIndex = 0;
@@ -2183,11 +2185,17 @@ async function startPreview(startSec: number): Promise<void> {
   updateMetronomeReadout(startSec * 1000);
   previewScheduledUntilSec = startSec;
   schedulePreviewUntil(Math.min(songEndSec, startSec + PREVIEW_LOOKAHEAD_SEC), rate);
+  previewAudioTimer = window.setInterval(advancePreviewAudio, 50);
   previewTimer = requestAnimationFrame(tick);
 }
 
-btnPlay.onclick = () => { void startPreview(Number(timeline.value)); };
-btnPause.onclick = () => { stopPreview(); btnPause.classList.add("transport-active"); };
+function togglePreview(): void {
+  if (previewPlaying) {
+    const sec = audioCtx ? previewStartSec + Math.max(0, audioCtx.currentTime - previewStartedAt) * currentRate() : Number(timeline.value);
+    stopPreview(); setPosition(sec);
+  } else if (!btnPlay.disabled) void startPreview(Number(timeline.value));
+}
+btnPlay.onclick = togglePreview;
 
 document.addEventListener("keydown", (event) => {
   if (event.code !== "Space" || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
@@ -2197,8 +2205,7 @@ document.addEventListener("keydown", (event) => {
   if (tag === "textarea" || target?.isContentEditable || (tag === "input" && ["text", "number"].includes(inputType))) return;
   if (!state.compatibilityOk || !state.targetAudioBuffer) return;
   event.preventDefault();
-  if (previewPlaying) { stopPreview(); btnPause.classList.add("transport-active"); }
-  else void startPreview(Number(timeline.value));
+  togglePreview();
 });
 
 /* ------------------------------------------------------------------ */
@@ -2334,6 +2341,9 @@ manualSync.onchange = manualSync.oninput;
 
 function setStandaloneControls(single: boolean): void {
   const kind = state.standaloneKind ?? (state.bmsPath && !state.osuPath ? "bms" : "osu");
+  $("legend-original").style.background = single && kind === "bms"
+    ? "linear-gradient(90deg,#fff0cf 0 33%,#4ce0bd 33% 66%,#ffba66 66%)"
+    : "linear-gradient(90deg,#fff 0 33%,#2fc3f3 33% 66%,#ffda32 66%)";
   for (const option of Array.from(metronomeSource.options)) {
     option.hidden = single && option.value !== kind;
     option.disabled = option.hidden;
@@ -2428,24 +2438,43 @@ for (const kind of ["bms", "osu"] as const) {
 function viewDivision(): number { return clamp(Number($<HTMLSelectElement>("view-division").value) || 4, 1, 16); }
 function viewGridLines(startMs: number, endMs: number): { timeMs: number; beat: boolean }[] {
   const lines: { timeMs: number; beat: boolean }[] = [];
-  const division = viewDivision();
-  if (state.standaloneKind === "bms" && state.nativeViewGrids[division])
-    return state.nativeViewGrids[division].filter(line => line.timeMs >= startMs && line.timeMs <= endMs);
-  if (state.standaloneKind === "bms") {
-    const beats = state.syncedBmsBeatTimes;
-    for (let i = 0; i + 1 < beats.length; i++) {
-      if (beats[i + 1] < startMs) continue; if (beats[i] > endMs) break;
-      for (let n = 0; n < division; n++) { const timeMs = beats[i] + (beats[i + 1] - beats[i]) * n / division;
-        if (timeMs >= startMs && timeMs <= endMs) lines.push({ timeMs, beat: n === 0 }); }
+  const division = viewDivision(), limit = 512;
+  const gap = Math.max(.001, (endMs - startMs) / limit);
+  let last = -Infinity;
+  const add = (timeMs: number, beat: boolean) => {
+    if (Number.isFinite(timeMs) && timeMs >= startMs && timeMs < endMs && timeMs >= last + gap && lines.length < limit) {
+      lines.push({ timeMs, beat }); last = timeMs;
     }
-  } else for (let i = 0; i < state.timingPoints.length; i++) {
+  };
+  if (state.standaloneKind === "bms" && state.nativeViewGrids[division]) {
+    const grid = state.nativeViewGrids[division];
+    let lo = 0, hi = grid.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (grid[mid].timeMs < startMs) lo = mid + 1; else hi = mid; }
+    for (let i = lo; i < grid.length && grid[i].timeMs < endMs && lines.length < limit;) {
+      add(grid[i].timeMs, grid[i].beat);
+      const boundary = grid[i].timeMs + gap;
+      lo = i + 1; hi = grid.length;
+      while (lo < hi) { const mid = (lo + hi) >>> 1; if (grid[mid].timeMs < boundary) lo = mid + 1; else hi = mid; }
+      i = lo;
+    }
+  } else if (state.standaloneKind === "bms") {
+    const beats = state.syncedBmsBeatTimes;
+    for (let i = 0; i + 1 < beats.length && lines.length < limit; i++) {
+      if (beats[i + 1] < startMs) continue; if (beats[i] >= endMs) break;
+      for (let n = 0; n < division; n++) add(beats[i] + (beats[i + 1] - beats[i]) * n / division, n === 0);
+    }
+  } else for (let i = 0; i < state.timingPoints.length && lines.length < limit; i++) {
     const tp = state.timingPoints[i], end = Math.min(endMs, state.timingPoints[i + 1]?.timeMs ?? endMs);
-    const step = tp.beatLength / division; if (!(step > 0)) continue;
-    for (let n = Math.max(0, Math.ceil((startMs - tp.timeMs) / step)); tp.timeMs + n * step < end; n++)
-      lines.push({ timeMs: tp.timeMs + n * step, beat: n % division === 0 });
+    const from = Math.max(startMs, tp.timeMs, last + gap), step = tp.beatLength / division;
+    if (!(step > 0) || !Number.isFinite(step) || end <= from) continue;
+    const stride = Math.max(1, Math.ceil(gap / step));
+    const first = Math.max(0, Math.ceil((from - tp.timeMs) / step));
+    const count = Math.min(limit - lines.length, Math.ceil((end - tp.timeMs - first * step) / (step * stride)));
+    for (let n = 0; n < count; n++) { const index = first + n * stride; add(tp.timeMs + index * step, index % division === 0); }
   }
   return lines;
 }
+
 function viewScrollStep(timeMs: number, direction = 1): number {
   const grid = state.standaloneKind === "bms" ? state.nativeViewGrids[viewDivision()] : null;
   if (grid?.length) {
