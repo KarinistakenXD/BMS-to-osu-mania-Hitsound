@@ -1196,7 +1196,7 @@ function renderMeterBar(meter = 4, activeBeat = -1): void {
     metronomeBeatBar.replaceChildren();
     for (let i = 0; i < safeMeter; i++) {
       const el = document.createElement("span");
-      el.className = `meter-beat${i === 0 ? " accent" : ""}`;
+      el.className = "meter-beat";
       metronomeBeatBar.appendChild(el);
     }
   }
@@ -1923,7 +1923,7 @@ function osuMetronomeTicks(startMs: number, endMs: number, rate = 1): MetronomeT
       const index = first + n * stride, t = tp.timeMs + index * tp.beatLength;
       if (!Number.isFinite(t) || t >= segmentEnd - 1e-7 || t < from - 1e-7) continue;
       const meter = Math.max(1, tp.meter || 4), beat = index % meter;
-      out.push({ timeMs: t, accent: beat === 0, beat, meter });
+      out.push({ timeMs: t, accent: false, beat, meter });
     }
   }
   return out;
@@ -1937,7 +1937,7 @@ function bmsMetronomeTicks(startMs: number, endMs: number, rate = 1): MetronomeT
     if (t >= endMs) break;
     if (!Number.isFinite(t)) continue;
     const beat = i % 4;
-    out.push({ timeMs: t, accent: beat === 0, beat, meter: 4 }); last = t;
+    out.push({ timeMs: t, accent: false, beat, meter: 4 }); last = t;
   }
   return out;
 }

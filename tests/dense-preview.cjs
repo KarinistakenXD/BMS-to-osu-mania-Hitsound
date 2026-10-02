@@ -6,7 +6,13 @@ function include(a,b){vm.runInContext(ts.transpile(source.slice(source.indexOf(a
 include('function osuMetronomeTicks','/** Create a short osu!');
 include('function viewDivision','$("view-division").onchange');
 const run=(code)=>vm.runInContext(code,context,{timeout:2000});
-assert.deepEqual(Array.from(run('osuMetronomeTicks(0,2000)'),x=>[x.timeMs,x.accent]),[[0,true],[500,false],[1000,false],[1500,false]]);
+assert.deepEqual(Array.from(run('osuMetronomeTicks(0,2000)'),x=>[x.timeMs,x.accent]),[[0,false],[500,false],[1000,false],[1500,false]]);
+for (const meter of [3,5,6]) {
+  state.timingPoints[0].meter = meter;
+  const measured = run('osuMetronomeTicks(0,4000)');
+  assert(measured.every(x=>!x.accent && x.meter===meter));
+  assert.equal(measured[meter].beat,0);
+}
 // A tiny positive beat length used for SV gimmicks previously exploded both loops.
 state.timingPoints=[{timeMs:0,beatLength:1e-9,meter:4},{timeMs:30000,beatLength:500,meter:4}];
 assert(run('viewGridLines(0,60000)').length<=512);

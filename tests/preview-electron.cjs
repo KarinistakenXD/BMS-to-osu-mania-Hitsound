@@ -103,7 +103,10 @@ app.whenReady().then(async () => {
         const denseSource = targetSource;
         if (!previewPlaying || previewTicksQueue.length > Math.ceil((state.songLengthMs + 1) / 50) || !metronomeSources.length) throw new Error('Dense timing stalled audio setup: ' + previewTicksQueue.length + ' ticks, ' + metronomeSources.length + ' sources');
         await new Promise(resolve => setTimeout(resolve, 200));
-        if (!previewPlaying || targetSource !== denseSource || audioCtx.state !== 'running' || Number(timeline.value) <= 0) throw new Error('Dense timing stopped preview clock');
+        // This fixture uses a hidden window, where Chromium may suppress RAF.
+        // Exercise the real canvas tick explicitly and verify the independent audio clock.
+        tick();
+        if (!previewPlaying || targetSource !== denseSource || audioCtx.state !== 'running' || audioCtx.currentTime <= previewStartedAt || !previewAudioTimer) throw new Error('Dense timing stopped preview clock: ' + audioCtx.state + ', ' + audioCtx.currentTime + ', started ' + previewStartedAt);
         togglePreview();
         if (previewPlaying || btnPlay.textContent !== '▶' || previewAudioTimer || metronomeSources.length) throw new Error('Unified pause did not stop audio');
         await startPreview(Number(timeline.value));
