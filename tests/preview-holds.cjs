@@ -25,5 +25,6 @@ for (const source of ['target', 'converted']) {
   assert.equal(draw(4000, 5000, 2000, source).heads.length, 0, 'future hold outside approach window hidden');
 }
 const tail = draw(1000, 3000, 2800);
-assert.equal(tail.bodies.at(-1)[3], 2, 'original LN tail cap stays thinner than the note head');
+assert.equal(tail.bodies.at(-1)[3], 1, 'original LN tail cap stays thinner than the note head');
+assert(tail.bodies[0][2] < tail.heads[0][2] * .6, 'original hold body is narrower than its head');
 console.log('PASS: hold approach, sustained body, pinned head, release, taps, and target/overlay drawing');

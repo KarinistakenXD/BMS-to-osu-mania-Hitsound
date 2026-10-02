@@ -18,6 +18,8 @@ You can also open one BMS or osu!mania song folder to inspect the original notes
 - Metronome clicks use one consistent sound with beat flashes and a separate volume slider independent of map audio / Master volume. osu! meters such as 3/4, 5/4 and 6/4 are retained in the beat display without the downbeat label.
 - The metronome's metal weight moves higher for slower tempos and lower for faster tempos, including playback-speed changes.
 - The metronome stick swings continuously between actual beat times using the audio clock, avoiding pauses from separate CSS transitions at BPM changes.
+- Metronome is always active; use its volume slider to mute sound while keeping movement and flashes. Beat dots follow chart timing directly, including beat-one resets at osu! BPM changes and faster beat intervals.
+- Original hold bodies and 1px tails are slimmer; the preview column area is 4px taller.
 
 See [v1.0.4 release notes](release-notes/v1.0.4.md) for the short release list.
 

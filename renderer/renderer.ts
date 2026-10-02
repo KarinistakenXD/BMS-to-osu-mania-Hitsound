@@ -85,7 +85,6 @@ const notePreviewSpeedOut = $<HTMLOutputElement>("note-preview-speed-out");
 const notePreviewInfo = $<HTMLDivElement>("note-preview-info");
 const keysInput = $<HTMLInputElement>("keys");
 const previewMode = $<HTMLSelectElement>("preview-mode");
-const metronomeEnabled = $<HTMLInputElement>("metronome-enabled");
 const metronomeVolume = $<HTMLInputElement>("metronome-volume");
 const metronomeSource = $<HTMLSelectElement>("metronome-source");
 const metronomeModel = $<HTMLDivElement>("metronome-model");
@@ -396,12 +395,9 @@ function assessPairCompatibility(sync: SyncResult): PairCompatibilityResult {
 }
 
 function activeTimingPoint(timeMs: number): TimingPoint | null {
-  let active: TimingPoint | null = null;
-  for (const tp of state.timingPoints) {
-    if (tp.timeMs <= timeMs) active = tp;
-    else break;
-  }
-  return active;
+  let lo = 0, hi = state.timingPoints.length;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (state.timingPoints[mid].timeMs <= timeMs) lo = mid + 1; else hi = mid; }
+  return state.timingPoints[lo - 1] ?? null;
 }
 
 interface SnapCandidate { timeMs: number; distanceMs: number; source: "target" | "phase" | "grid"; }
@@ -923,11 +919,11 @@ function drawPreviewNote(
     const bodyTop = Math.min(yHead, yEnd);
     const bodyBottom = Math.max(yHead, yEnd);
     ctx.globalAlpha = source === "target" ? .85 : .68;
-    const inset = source === "target" ? 0 : w * .2;
+    const inset = source === "target" ? w * .225 : w * .2;
     ctx.fillRect(x + inset, bodyTop, w - inset * 2, Math.max(3, bodyBottom - bodyTop));
     ctx.globalAlpha = 1;
     if (source === "target" && previewScrollDistance(nowMs, note.endTimeMs) <= horizonMs)
-      ctx.fillRect(x, yEnd - 2, w, 2); // Thin LN tail cap, independent of the wider note head.
+      ctx.fillRect(x + inset, yEnd - 1, w - inset * 2, 1); // Slim tail follows the narrower hold body.
   }
   const noteH = Math.max(5, Math.min(10, laneW * .28));
   ctx.beginPath();
@@ -1198,6 +1194,19 @@ function metronomeBpmAt(timeMs: number): number | null {
   return delta > 1 ? 60000 / delta : null;
 }
 
+function metronomeBeatAt(timeMs: number): { beat: number; meter: number } | null {
+  if (metronomeSource.value === "bms") {
+    const beats = state.syncedBmsBeatTimes;
+    let lo = 0, hi = beats.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (beats[mid] <= timeMs) lo = mid + 1; else hi = mid; }
+    return lo ? { beat: (lo - 1) % 4, meter: 4 } : null;
+  }
+  const tp = activeTimingPoint(timeMs);
+  if (!tp || !(tp.beatLength > 0) || !Number.isFinite(tp.beatLength)) return null;
+  const index = Math.floor((timeMs - tp.timeMs) / tp.beatLength + 1e-7);
+  const meter = clamp(Math.round(tp.meter || 4), 1, 16);
+  return { beat: Number.isSafeInteger(index) ? index % meter : 0, meter };
+}
 function renderMeterBar(meter = 4, activeBeat = -1): void {
   const safeMeter = clamp(Math.round(meter || 4), 1, 16);
   if (metronomeBeatBar.children.length !== safeMeter) {
@@ -1253,7 +1262,7 @@ function resetVisualMetronome(): void {
   metronomeModel.classList.remove("metronome-pulse", "metronome-accent");
   metronomeStick.style.transitionDuration = "180ms";
   metronomeStick.style.transform = "translateX(-50%) rotate(0deg)";
-  metronomeBeatLabel.textContent = metronomeEnabled.checked ? "ready" : "off";
+  metronomeBeatLabel.textContent = "ready";
   const tp = activeTimingPoint(Number(timeline.value) * 1000);
   renderMeterBar(tp?.meter ?? 4, -1);
   updateMetronomeReadout(Number(timeline.value) * 1000);
@@ -1261,7 +1270,6 @@ function resetVisualMetronome(): void {
 }
 
 function pulseVisualMetronome(tickInfo: MetronomeTick, rate: number): void {
-  if (!metronomeEnabled.checked) return;
   visualMetronomeSide = (visualMetronomeIndex - 1) % 2 ? -1 : 1;
 
   metronomeModel.classList.remove("metronome-pulse", "metronome-accent");
@@ -1285,12 +1293,19 @@ function metronomeSwingAngle(nowMs: number, previousMs: number, nextMs: number, 
   return side * 25 * Math.cos(Math.PI * phase);
 }
 function updateVisualMetronome(nowMs: number, rate: number): void {
-  if (!metronomeEnabled.checked || !previewPlaying) return;
+  if (!previewPlaying) return;
   let latest: MetronomeTick | undefined;
-  while (visualMetronomeIndex < previewTicksQueue.length && previewTicksQueue[visualMetronomeIndex].timeMs <= nowMs + 10 * rate)
+  while (visualMetronomeIndex < previewTicksQueue.length && previewTicksQueue[visualMetronomeIndex].timeMs <= nowMs)
     latest = previewTicksQueue[visualMetronomeIndex++];
   // A delayed frame updates once instead of forcing a layout for every missed beat.
   if (latest) pulseVisualMetronome(latest, rate);
+  // The meter follows the chart, even when protective audio thinning skips a click.
+  const currentBeat = metronomeBeatAt(nowMs);
+  if (currentBeat) {
+    renderMeterBar(currentBeat.meter, currentBeat.beat);
+    metronomeBeatLabel.textContent = `beat ${currentBeat.beat + 1}/${currentBeat.meter}`;
+  }
+  updateMetronomeReadout(nowMs);
   const previous = previewTicksQueue[visualMetronomeIndex - 1];
   if (previous) {
     const nextMs = previewTicksQueue[visualMetronomeIndex]?.timeMs
@@ -1302,10 +1317,8 @@ function updateVisualMetronome(nowMs: number, rate: number): void {
 }
 
 function refreshMetronomeUi(): void {
-  metronomeSource.disabled = !metronomeEnabled.checked;
-  metronomeModel.classList.toggle("is-disabled", !metronomeEnabled.checked);
-  if (!metronomeEnabled.checked) resetVisualMetronome();
-  else updateMetronomeReadout(Number(timeline.value) * 1000);
+  metronomeSource.disabled = false;
+  updateMetronomeReadout(Number(timeline.value) * 1000);
 }
 
 timeline.oninput = () => {
@@ -1318,7 +1331,6 @@ resnap.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSe
 snapTolerance.oninput = () => { stopPreview(); invalidatePreviewAudio(); drawNotePreview(); scheduleTimingPreview(); };
 resnapMode.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSettingsChanged(); };
 previewMode.onchange = previewSettingsChanged;
-metronomeEnabled.onchange = () => { refreshMetronomeUi(); if (previewPlaying) void startPreview(Number(timeline.value)); };
 metronomeSource.onchange = () => { if (previewPlaying) void startPreview(Number(timeline.value)); };
 metronomeVolume.oninput = refreshMetronomeVolume;
 playbackRate.onchange = previewSettingsChanged;
@@ -1991,7 +2003,7 @@ function ensureMetronomeBuffers(): void {
 }
 
 function scheduleMetronomeTick(tick: MetronomeTick, rate: number): void {
-  if (!audioCtx || !metronomeEnabled.checked) return;
+  if (!audioCtx) return;
   ensureMetronomeBuffers();
   const rawBuffer = tick.accent ? metronomeAccentBuffer : metronomeBeatBuffer;
   if (!rawBuffer) return;
@@ -2203,15 +2215,13 @@ async function startPreview(startSec: number): Promise<void> {
   // short sample; the song/keysounds are the long-form tempo-processed buses.
   previewEventsQueue = [];
   previewEventIndex = 0;
-  previewTicksQueue = metronomeEnabled.checked
-    ? ((metronomeSource.value as MetronomeSource) === "bms"
+  previewTicksQueue = (metronomeSource.value as MetronomeSource) === "bms"
       ? bmsMetronomeTicks(startSec * 1000, state.songLengthMs + 1, rate)
-      : osuMetronomeTicks(startSec * 1000, state.songLengthMs + 1, rate))
-    : [];
+      : osuMetronomeTicks(startSec * 1000, state.songLengthMs + 1, rate);
   previewTickIndex = 0;
   visualMetronomeIndex = 0;
   visualMetronomeSide = -1;
-  metronomeBeatLabel.textContent = metronomeEnabled.checked ? "running" : "off";
+  metronomeBeatLabel.textContent = "running";
   updateMetronomeReadout(startSec * 1000);
   previewScheduledUntilSec = startSec;
   schedulePreviewUntil(Math.min(songEndSec, startSec + PREVIEW_LOOKAHEAD_SEC), rate);

@@ -30,7 +30,8 @@ app.whenReady().then(async () => {
         state.targetAnchorTimes = [500];
         state.songLengthMs = 8000; state.compatibilityOk = true;
         previewMode.value = 'target-plus-keys'; playbackRate.value = '1';
-        metronomeEnabled.checked = false;
+        metronomeVolume.value = '0';
+        if (document.getElementById('metronome-enabled')) throw new Error('Metronome checkbox still present');
         keysInput.value = '15';
         const warming = warmPreview();
         const generation = preparationGeneration;
@@ -98,7 +99,7 @@ app.whenReady().then(async () => {
         state.timingPoints = Array.from({length:10000}, (_,i)=>({timeMs:i*.1,beatLength:1e-9,meter:4}));
         state.scrollPoints = Array.from({length:10000}, (_,i)=>({timeMs:i*.1,multiplier:i%2 ? 10 : .1}));
         $("view-sv").checked = true;
-        metronomeEnabled.checked = true; metronomeSource.value = 'osu';
+        metronomeSource.value = 'osu';
         await startPreview(0);
         const denseSource = targetSource;
         audioVolume.value = '0'; refreshVolumeLabels();
@@ -120,6 +121,10 @@ app.whenReady().then(async () => {
         if (previewPlaying || btnPlay.textContent !== '▶' || previewAudioTimer || metronomeSources.length) throw new Error('Unified pause did not stop audio');
         await startPreview(Number(timeline.value));
         if (!previewPlaying || btnPlay.textContent !== 'Ⅱ') throw new Error('Unified resume failed');
+        metronomeVolume.value = '0'; refreshMetronomeVolume();
+        state.timingPoints = [{timeMs:0,beatLength:500,meter:4},{timeMs:510,beatLength:250,meter:3}];
+        updateVisualMetronome(510,1);
+        if (metronomeBeatLabel.textContent !== 'beat 1/3' || !metronomeBeatBar.children[0].classList.contains('active') || activeMetronomeGain.gain.value !== 0) throw new Error('Muted metronome lost visual beat-one reset');
         stopPreview();
         return { playMs, resumeMs, sharedClock: clock > 0, busFrames: bus.length };
       };
