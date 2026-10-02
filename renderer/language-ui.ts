@@ -51,10 +51,10 @@ export function initializeLanguageUi(redraw: () => void): void {
     observer.disconnect();
     document.documentElement.lang = language === "zh" ? "zh-CN" : language;
     document.querySelectorAll<HTMLButtonElement>("[data-language]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.language === language)));
+    redraw();
     translateNode(document.body);
     try { localStorage.setItem("bms2osu-language", language); } catch {}
     window.bms2osu.setLanguage?.(language).catch(() => {});
-    redraw();
     observe();
   };
   document.querySelectorAll<HTMLButtonElement>("[data-language]").forEach(button => button.addEventListener("click", () => {

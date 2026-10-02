@@ -146,6 +146,12 @@ app.whenReady().then(async () => {
         }
         if (document.getElementById('btn-convert').textContent !== 'Convert difficulty + export samples') throw new Error('English round trip lost canonical text');
         stopPreview();
+        for (const locale of ['th', 'zh', 'en']) {
+          document.querySelector('[data-language="' + locale + '"]').click();
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (locale !== 'en' && /^(Original|Target|Converted)/.test(notePreviewInfo.textContent)) throw new Error('Paused chart summary was not translated');
+          if (previewPlaying || preparationGeneration !== languageGeneration) throw new Error('Paused language change touched audio');
+        }
         return { playMs, resumeMs, sharedClock: clock > 0, busFrames: bus.length };
       };
     `;
