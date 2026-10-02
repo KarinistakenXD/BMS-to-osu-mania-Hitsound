@@ -19,3 +19,9 @@ assert.equal(vm.runInContext('previewVisibleEnd(0,1250)',ctx),1250);
 ctx.state.scrollPoints=[{timeMs:0,multiplier:.1}];toggle.checked=true;
 assert(Math.abs(vm.runInContext('previewVisibleEnd(0,100)',ctx)-1000)<.001,'slow SV reveals notes beyond the constant-speed time window');
 console.log('PASS: osu BPM/inherited SV/reset, BMS SC/EXT/BPM/STOP, unsupported diagnostics, integrated positions, source switch, and toggle off');
+
+const multi=['0,1000,4,1,0,100,1,0','1000,500,4,1,0,100,1,0','2000,-50,4,1,0,100,0,0','10000,250,4,1,0,100,1,0'].map(r=>r.split(','));
+assert.deepEqual(osuScrollPoints(multi,9000),[{timeMs:0,multiplier:.5},{timeMs:1000,multiplier:1},{timeMs:2000,multiplier:2},{timeMs:10000,multiplier:2}]);
+const repeated=['0,500,4,1,0,100,1,0','1000,250,4,1,0,100,1,0','2500,500,4,1,0,100,1,0'].map(r=>r.split(','));
+assert.equal(osuScrollPoints(repeated,4000)[0].multiplier,1,'repeated BPM durations aggregate rather than picking longest single segment');
+console.log('PASS: short intro BPM normalization, final hold duration, post-chart BPM exclusion, and repeated-tempo duration aggregation');

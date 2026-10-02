@@ -925,6 +925,8 @@ function drawPreviewNote(
     const inset = source === "target" ? 0 : w * .2;
     ctx.fillRect(x + inset, bodyTop, w - inset * 2, Math.max(3, bodyBottom - bodyTop));
     ctx.globalAlpha = 1;
+    if (source === "target" && previewScrollDistance(nowMs, note.endTimeMs) <= horizonMs)
+      ctx.fillRect(x, yEnd - 2, w, 2); // Thin LN tail cap, independent of the wider note head.
   }
   const noteH = Math.max(5, Math.min(10, laneW * .28));
   ctx.beginPath();

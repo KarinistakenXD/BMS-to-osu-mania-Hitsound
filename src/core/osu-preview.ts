@@ -79,5 +79,6 @@ export async function readOsuPreview(osuPath: string, bmsPath: string) {
   const reuseKey = audioIdentity && bmsIdentity && osuMeta.title && osuMeta.artist && timingRows.length
     ? JSON.stringify([audioIdentity, bmsIdentity, normalize(osuMeta.title), normalize(osuMeta.artist), timingRows, mode])
     : "";
-  return { osuAudioPath, timingPoints, scrollPoints: osuScrollPoints(timingRows), metadata: osuMeta, osuPreview: { mode, keys: targetKeys, notes: targetNotes }, reuseKey };
+  const lastObjectTimeMs = targetNotes.length ? targetNotes.reduce((end, note) => Math.max(end, note.endTimeMs), -Infinity) : undefined;
+  return { osuAudioPath, timingPoints, scrollPoints: osuScrollPoints(timingRows, lastObjectTimeMs), metadata: osuMeta, osuPreview: { mode, keys: targetKeys, notes: targetNotes }, reuseKey };
 }

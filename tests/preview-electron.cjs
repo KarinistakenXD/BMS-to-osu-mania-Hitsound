@@ -101,7 +101,7 @@ app.whenReady().then(async () => {
         metronomeEnabled.checked = true; metronomeSource.value = 'osu';
         await startPreview(0);
         const denseSource = targetSource;
-        if (!previewPlaying || previewTicksQueue.length > 160 || !metronomeSources.length) throw new Error('Dense timing stalled audio setup');
+        if (!previewPlaying || previewTicksQueue.length > Math.ceil((state.songLengthMs + 1) / 50) || !metronomeSources.length) throw new Error('Dense timing stalled audio setup: ' + previewTicksQueue.length + ' ticks, ' + metronomeSources.length + ' sources');
         await new Promise(resolve => setTimeout(resolve, 200));
         if (!previewPlaying || targetSource !== denseSource || audioCtx.state !== 'running' || Number(timeline.value) <= 0) throw new Error('Dense timing stopped preview clock');
         togglePreview();

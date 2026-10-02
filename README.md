@@ -14,6 +14,7 @@ You can also open one BMS or osu!mania song folder to inspect the original notes
 - One Play/Pause button, clear-selection buttons, preparation progress showing song duration and elapsed time, and deliberate seeking without trapping page scrolling.
 - Bounded beat-grid rendering and metronome clicks for extreme BPM / dense timing maps; audio scheduling runs separately from visual redraws. Overcrowded metronome clicks are thinned to at most 20 per real second.
 - Original osu!mania notes use mirrored white/cyan columns with a yellow center in odd key modes, inspired by the R Skin bar layout. Native BMS uses cream/teal/orange with distinct scratch columns; converted hitsounds remain pink.
+- Multi-BPM osu!mania scroll simulation normalizes against the duration-weighted most common BPM through the last note, including LN tails. Original holds have a thin tail cap.
 
 See [v1.0.4 release notes](release-notes/v1.0.4.md) for the short release list.
 
