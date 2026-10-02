@@ -1262,11 +1262,7 @@ function resetVisualMetronome(): void {
 
 function pulseVisualMetronome(tickInfo: MetronomeTick, rate: number): void {
   if (!metronomeEnabled.checked) return;
-  visualMetronomeSide *= -1;
-  const next = previewTicksQueue[visualMetronomeIndex];
-  const beatSec = next ? Math.max(.08, (next.timeMs - tickInfo.timeMs) / 1000 / Math.max(.01, rate)) : .35;
-  metronomeStick.style.transitionDuration = `${clamp(beatSec * .82, .09, 1.35).toFixed(3)}s`;
-  metronomeStick.style.transform = `translateX(-50%) rotate(${visualMetronomeSide * 25}deg)`;
+  visualMetronomeSide = (visualMetronomeIndex - 1) % 2 ? -1 : 1;
 
   metronomeModel.classList.remove("metronome-pulse", "metronome-accent");
   // Force the CSS pulse animation to restart even on consecutive fast beats.
@@ -1284,6 +1280,10 @@ function pulseVisualMetronome(tickInfo: MetronomeTick, rate: number): void {
   }, 360);
 }
 
+function metronomeSwingAngle(nowMs: number, previousMs: number, nextMs: number, side: number): number {
+  const phase = clamp((nowMs - previousMs) / Math.max(.001, nextMs - previousMs), 0, 1);
+  return side * 25 * Math.cos(Math.PI * phase);
+}
 function updateVisualMetronome(nowMs: number, rate: number): void {
   if (!metronomeEnabled.checked || !previewPlaying) return;
   let latest: MetronomeTick | undefined;
@@ -1291,6 +1291,14 @@ function updateVisualMetronome(nowMs: number, rate: number): void {
     latest = previewTicksQueue[visualMetronomeIndex++];
   // A delayed frame updates once instead of forcing a layout for every missed beat.
   if (latest) pulseVisualMetronome(latest, rate);
+  const previous = previewTicksQueue[visualMetronomeIndex - 1];
+  if (previous) {
+    const nextMs = previewTicksQueue[visualMetronomeIndex]?.timeMs
+      ?? previous.timeMs + 60000 / Math.max(1, metronomeBpmAt(previous.timeMs) ?? 120);
+    const angle = metronomeSwingAngle(nowMs, previous.timeMs, nextMs, visualMetronomeSide);
+    metronomeStick.style.transitionDuration = "0ms";
+    metronomeStick.style.transform = `translateX(-50%) rotate(${angle.toFixed(2)}deg)`;
+  }
 }
 
 function refreshMetronomeUi(): void {

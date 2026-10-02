@@ -17,6 +17,7 @@ You can also open one BMS or osu!mania song folder to inspect the original notes
 - Multi-BPM osu!mania scroll simulation normalizes against the duration-weighted most common BPM through the last note, including LN tails. Original holds have a thin tail cap.
 - Metronome clicks use one consistent sound with beat flashes and a separate volume slider independent of map audio / Master volume. osu! meters such as 3/4, 5/4 and 6/4 are retained in the beat display without the downbeat label.
 - The metronome's metal weight moves higher for slower tempos and lower for faster tempos, including playback-speed changes.
+- The metronome stick swings continuously between actual beat times using the audio clock, avoiding pauses from separate CSS transitions at BPM changes.
 
 See [v1.0.4 release notes](release-notes/v1.0.4.md) for the short release list.
 

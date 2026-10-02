@@ -35,4 +35,15 @@ const weight={style:{}},readout=vm.createContext({metronomeBpm:{},metronomeStick
 vm.runInContext(ts.transpile(source.slice(source.indexOf('function updateMetronomeReadout'),source.indexOf('function resetVisualMetronome')),{target:ts.ScriptTarget.ES2022}),readout);
 const position=()=>{vm.runInContext('updateMetronomeReadout(0)',readout);return parseFloat(weight.style.top);};
 const slow=position();readout.bpm=180;assert(position()>slow,'faster tempo lowers the metal weight');readout.bpm=120;const normal=position();readout.rate=.5;assert(position()<normal,'slow playback raises the weight');readout.bpm=1e15;assert(position()<=59,'extreme tempo stays on stick');
+for (const bpm of [-120,.001,0,60000,Infinity,NaN]) {
+  readout.bpm=bpm;
+  const bounded=position();assert(Number.isFinite(bounded) && bounded>=5 && bounded<=59,'invalid/extreme BPM cannot move weight beyond stick');
+}
 console.log('PASS: mechanical metronome weight follows tempo, playback speed and physical visual bounds');
+include('function metronomeSwingAngle','function updateVisualMetronome');
+assert.equal(run('metronomeSwingAngle(0,0,500,1)'),25);
+assert(Math.abs(run('metronomeSwingAngle(250,0,500,1)'))<1e-6);
+assert.equal(run('metronomeSwingAngle(500,0,500,1)'),-25);
+assert.equal(run('metronomeSwingAngle(500,500,600,-1)'),-25,'swing is continuous across a BPM change');
+assert(Math.abs(run('metronomeSwingAngle(550,500,600,-1)'))<1e-6,'new tempo moves immediately, without CSS pause');
+console.log('PASS: continuous audio-clock swing through tempo changes');
