@@ -11,6 +11,9 @@ export interface SyncAnchor {
 }
 
 export interface SyncResult {
+  method?: "onset" | "energy";
+  manualCorrectionMs?: number;
+  alternatives?: { method: "onset" | "energy"; confidence: number; residualMs: number }[];
   mode: "constant" | "affine";
   offsetMs: number;
   scale: number;
@@ -25,7 +28,10 @@ interface SparsePeak {
   value: number;
 }
 
-interface SampleAnalysis {
+export interface SampleAnalysis {
+  durationMs: number;
+  pcmBytes: number;
+  energy: Float32Array;
   peaks: SparsePeak[];
   weight: number;
 }
@@ -113,9 +119,11 @@ function peakPick(onset: number[]): SparsePeak[] {
   return peaks;
 }
 
-function analyseBuffer(buffer: AudioBuffer): SampleAnalysis {
+export function analyseBuffer(buffer: AudioBuffer): SampleAnalysis {
   const rms = monoRmsFrames(buffer);
-  if (rms.length === 0) return { peaks: [], weight: 0 };
+  const energy = Float32Array.from(rms.filter((_, i) => i % 10 === 0), v => v * v);
+  const compact = { energy, pcmBytes: buffer.length * buffer.numberOfChannels * 4, durationMs: buffer.duration * 1000 };
+  if (rms.length === 0) return { ...compact, peaks: [], weight: 0 };
 
   const noiseFloor = percentile(rms, 0.10);
   const onset = new Array<number>(rms.length).fill(0);
@@ -139,12 +147,13 @@ function analyseBuffer(buffer: AudioBuffer): SampleAnalysis {
     let strongest = 0;
     for (let i = 1; i < rms.length; i++) if (rms[i] > rms[strongest]) strongest = i;
     return {
+      ...compact,
       peaks: [{ frame: strongest, value: 0.25 }],
       weight,
     };
   }
 
-  return { peaks, weight };
+  return { ...compact, peaks, weight };
 }
 
 function targetEnvelope(buffer: AudioBuffer): { grid: Float32Array; peaks: SparsePeak[] } {
@@ -263,7 +272,7 @@ function refineLagMs(
   let bestLagFrame = coarseFrame;
   let bestScore = cosineLagScore(reference, target, coarseFrame);
 
-  // The dense target grid is still 10 ms. Refine the selected lag with a small
+  // Refine the selected lag on the 2 ms target grid with a small
   // sub-frame interpolation from the three neighboring correlation scores.
   const left = cosineLagScore(reference, target, coarseFrame - 1);
   const right = cosineLagScore(reference, target, coarseFrame + 1);
@@ -308,34 +317,48 @@ function weightedAffineFit(anchors: SyncAnchor[]): { scale: number; offsetMs: nu
   return { scale, offsetMs, residualMs: Math.sqrt(error / sw) };
 }
 
-export function synchronizeBmsToOsu(
+function synchronizeFeatures(
   events: SyncEvent[],
-  buffers: Map<string, AudioBuffer>,
+  analyses: Map<string, SampleAnalysis>,
   targetAudio: AudioBuffer,
+  method: "onset" | "energy",
 ): SyncResult {
   if (events.length === 0 || targetAudio.length === 0) {
     throw new Error("No usable audio events were available for synchronization");
   }
 
-  const analyses = new Map<string, SampleAnalysis>();
-  for (const [id, buffer] of buffers) {
-    analyses.set(id, analyseBuffer(buffer));
-  }
-
   let lastEventMs = 0;
   for (const event of events) lastEventMs = Math.max(lastEventMs, event.timeMs);
   let lastSampleMs = 0;
-  for (const buffer of buffers.values()) lastSampleMs = Math.max(lastSampleMs, buffer.duration * 1000);
-  const referenceLengthMs = Math.max(lastEventMs + Math.min(lastSampleMs, 2000), 0);
+  for (const sample of analyses.values()) lastSampleMs = Math.max(lastSampleMs, sample.durationMs);
+  const referenceLengthMs = Math.max(lastEventMs + lastSampleMs, 0);
   const referenceFrames = Math.ceil(referenceLengthMs / FEATURE_FRAME_MS) + 1;
 
   const referenceGrid = buildReferenceGrid(events, analyses, referenceFrames);
-  const referencePeaks = sparseFromGrid(referenceGrid);
+  let referencePeaks = sparseFromGrid(referenceGrid);
+  if (method === "energy") {
+    referenceGrid.fill(0);
+    for (const event of events) {
+      const sample = analyses.get(event.wavId);
+      if (!sample) continue;
+      const start = Math.round(event.timeMs / FEATURE_FRAME_MS);
+      for (let i = 0; i < sample.energy.length; i++) {
+        const frame = start + i * 10;
+        if (frame >= 0 && frame < referenceGrid.length) referenceGrid[frame] += sample.energy[i];
+      }
+    }
+    // Use a common 20 ms energy grid, including quiet frames. Centering
+    // prevents flat sustained tones from appearing perfectly correlated.
+    const dense = new Float32Array(Math.ceil(referenceGrid.length / 10));
+    for (let i = 0; i < referenceGrid.length; i++) dense[Math.floor(i / 10)] += referenceGrid[i];
+    const centered = centeredEnergy(dense, true);
+    referencePeaks = Array.from(centered, (value, i) => ({ frame: i * 10, value }));
+  }
   if (referencePeaks.length < 4) {
     throw new Error("Not enough audible BMS events were found to synchronize the audio");
   }
 
-  const target = targetEnvelope(targetAudio).grid;
+  const target = method === "onset" ? targetEnvelope(targetAudio).grid : energyTarget(targetAudio);
   const coarse = searchLag(
     referencePeaks,
     target,
@@ -405,6 +428,7 @@ export function synchronizeBmsToOsu(
   );
 
   return {
+    method,
     mode,
     offsetMs,
     scale,
@@ -416,5 +440,35 @@ export function synchronizeBmsToOsu(
 }
 
 export function mapBmsTime(timeMs: number, sync: SyncResult): number {
-  return timeMs * sync.scale + sync.offsetMs;
+  return timeMs * sync.scale + sync.offsetMs + (sync.manualCorrectionMs ?? 0);
+}
+
+function centeredEnergy(input: Float32Array, power = false): Float32Array {
+  const values = Float32Array.from(input, v => power ? Math.sqrt(v) : v);
+  const mean = values.reduce((sum, v) => sum + v, 0) / Math.max(1, values.length);
+  let norm = 0;
+  for (let i = 0; i < values.length; i++) { values[i] -= mean; norm = Math.max(norm, Math.abs(values[i])); }
+  if (norm > 1e-5) for (let i = 0; i < values.length; i++) values[i] /= norm;
+  else values.fill(0);
+  return values;
+}
+function energyTarget(buffer: AudioBuffer): Float32Array {
+  const rms = monoRmsFrames(buffer);
+  const compact = centeredEnergy(Float32Array.from(rms.filter((_, i) => i % 10 === 0)));
+  return Float32Array.from(rms, (_, i) => compact[Math.floor(i / 10)]);
+}
+export function synchronizeBmsToOsu(events: SyncEvent[], samples: Map<string, AudioBuffer | SampleAnalysis>, target: AudioBuffer): SyncResult {
+  const analyses = new Map<string, SampleAnalysis>();
+  for (const [id, sample] of samples) analyses.set(id, "energy" in sample ? sample : analyseBuffer(sample));
+  let onset: SyncResult | undefined;
+  try { onset = synchronizeFeatures(events, analyses, target, "onset"); } catch {}
+  const energy = synchronizeFeatures(events, analyses, target, "energy");
+  // Compare the existing confidence and anchor residual evidence, not a
+  // universal acceptance percentage. Pair verification remains authoritative.
+  const evidence = (result: SyncResult) => result.confidence / (1 + result.residualMs / 25);
+  const selected = onset && evidence(onset) >= evidence(energy) ? onset : energy;
+  selected.alternatives = [onset, energy].filter((r): r is SyncResult => !!r).map(r => ({
+    method: r.method!, confidence: r.confidence, residualMs: r.residualMs,
+  }));
+  return selected;
 }

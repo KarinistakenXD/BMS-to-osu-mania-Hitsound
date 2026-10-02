@@ -2,6 +2,19 @@
 
 Turn BMS keysounds into fully playable osu!mania hitsound maps with automatic audio alignment, resnapping, preview, and export.
 
+You can also open one BMS or osu!mania song folder to inspect the original notes and listen without converting.
+
+## v1.0.4 changes
+
+- Folder selection with BMS and osu!mania difficulty lists beside Analyze / Note preview. Non-mania osu files are rejected.
+- Compact difficulty labels. BMS sorts by keyboard key count, scratch count, then level, lowest first. The hardest estimated difficulty is selected by default; manual choices are retained.
+- Manual timing correction, energy-envelope alignment for soft/ambient audio, and clearer synchronization diagnostics.
+- Lower sample-memory residency through compact analysis features and a temporary preview decode cache; preview headroom protection while retaining the export limiter.
+- Native single-chart lanes/holds, held-key monitoring, KPS, master volume, subdivisions, and optional source BPM/SV display.
+- Flat Play/Pause icons, clear-selection buttons, preparation progress showing song duration and elapsed time, and deliberate seeking without trapping page scrolling.
+
+See [v1.0.4 release notes](release-notes/v1.0.4.md) for the short release list.
+
 ## Download
 
 For normal use, download the latest **Windows installer (.exe) from GitHub Releases**.
@@ -66,7 +79,7 @@ The target osu! difficulty can be lower-key, such as 4K. It is timing/reference 
 - Converted-BMS, target-osu!, and overlay comparison modes.
 - Fixed 18K physical preview-lane width so lower-key target maps stay centered instead of stretching across the full preview.
 - Note-preview speed 1–40, approximately 11.48 seconds down to 287 ms of approach time.
-- Notes disappear exactly at the NOW/judgement line, with only a small pre-hit glow.
+- Tap heads align with the NOW/judgement line; long notes remain visible through release, with a small pre-hit glow.
 - Visual metronome with meter/beat indicators.
 - `bms!` logo BPM pulse and click-particle gimmick.
 - Spacebar play/pause.
@@ -76,7 +89,7 @@ The target osu! difficulty can be lower-key, such as 4K. It is timing/reference 
 
 Preview audio is prepared after analysis and when preview mode, resnap settings,
 or rate changes. Play and Pause reuse prepared audio for unchanged inputs.
-The button shows Preparing while a new bus or tempo transform is being built.
+The preview area shows preparation progress while a new bus or tempo transform is being built.
 Prepared rates are retained until the analyzed files or relevant settings change.
 The song and keysounds still share the same four-channel FFmpeg transform at
 non-1x rates; volume, seeking, and metronome changes reuse that audio.
@@ -123,8 +136,8 @@ Audio implementation references:
 
 ## Typical workflow
 
-1. Select the source BMS/BME chart.
-2. Select the target osu!mania `.osu` difficulty.
+1. Select the BMS song folder and choose its difficulty.
+2. Select the osu! song folder and choose an osu!mania difficulty. Other modes are rejected.
 3. Run **Analyze & synchronize**.
 4. If pair verification is uncertain, review the measured checks and decide whether the unusual/remastered pair is intentional.
 5. Inspect the waveform and note preview.
@@ -133,6 +146,14 @@ Audio implementation references:
 8. Choose sample-export options.
 9. Convert the difficulty and export samples.
 10. Open the result in osu! and run Mapset Verifier before treating it as rank-ready.
+
+For standalone viewing, select only one folder and click **Note preview**. Native key count and conversion controls are locked; Master volume, metronome and visual controls remain available. BMS lists show keyboard keys separately from scratch lanes. Folder scans read charts directly inside the selected folder, without decoding sample audio.
+
+BMS defaults use declared `PLAYLEVEL`. Osu defaults use peak note density over ten seconds, total notes, then OD/HP. This is an estimate within a folder, not an osu star rating or a comparison across different key modes.
+
+Ordinary mouse wheel scrolls the page. **Alt+wheel** seeks one second; **Alt+Shift+wheel** steps by the selected subdivision. Left-drag the waveform or middle-drag either preview to scrub. Shift gives finer middle-drag movement. Space toggles Play/Pause.
+
+Optional source scroll changes affect the visual preview only: osu BPM/inherited SV, or native BMS BPM/STOP/positive `SCROLL` extensions. Reverse BMS scrolling and `SPEED/SP` spacing extensions are currently unsupported and produce diagnostics.
 
 ## Timing / resnap model
 
@@ -149,6 +170,8 @@ match against target osu! audio
         ↓
 BMS → target time mapping
         ↓
+manual correction (milliseconds)
+        ↓
 validated target/native-phase resnap
         ↓
 automatic lane allocation / composites
@@ -157,6 +180,12 @@ playable custom-sample hitobjects
 ```
 
 The converter intentionally does **not** assume that `BMS time + first osu! red point` is sufficient. Independently cut/mastered audio can contain different leading silence, transient placement, offsets, or small drift.
+
+**Base tolerance** controls resnap search sensitivity. It does not shift the entire arrangement or rerun audio matching. It is a baseline rather than a strict maximum: Thorough mode expands target, native-phase and grid searches when the evidence supports it. It has no effect while resnap is off.
+
+**Manual Sync Correction** shifts every BMS event after automatic offset/drift alignment: positive values are later, negative values earlier. It retains the measured automatic fit. Notes update as you edit, and preview audio rebuilds after a short typing pause. Resnap runs after the correction and may pull notes back onto nearby anchors; disable resnap to inspect the exact manual shift. Press **Analyze & synchronize** to measure alignment again; this resets manual correction to zero.
+
+Sample analysis retains compact onset/energy features rather than all decoded sample PCM. Preview rendering uses short windows, bounded batches and a temporary cache. Full-song preview buses and cached tempo versions still use memory; this is not a guarantee that arbitrary large charts cannot exhaust RAM.
 
 ## Building from source (developers)
 

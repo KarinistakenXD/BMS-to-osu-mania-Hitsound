@@ -3,6 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const esbuild = require('esbuild');
 const assert = require('node:assert/strict');
+const testData = path.resolve('../electron-test-data');
+fs.mkdirSync(testData, { recursive: true });
+app.setPath('userData', testData); app.setPath('crashDumps', testData);
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.whenReady().then(async () => {
   const window = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
@@ -17,7 +20,10 @@ app.whenReady().then(async () => {
         state.targetAudioBuffer = audioCtx.createBuffer(2, audioCtx.sampleRate * 8, audioCtx.sampleRate);
         const sample = audioCtx.createBuffer(1, audioCtx.sampleRate / 10, audioCtx.sampleRate);
         sample.getChannelData(0).fill(.1);
-        state.audioBuffers.set('01', sample);
+        state.audioBuffers.set('01', analyseBuffer(sample));
+        state.files['01'] = 'fixture.wav';
+        const encodedSample = bufferToWavBytes(sample);
+        window.bms2osu.readAudioFile = async () => encodedSample;
         state.syncedEvents = [{ timeMs: 500, wavId: '01', lane: 0, isBgm: false }];
         state.targetMode = 3;
         state.targetNotes = [{ timeMs: 500, endTimeMs: 1500, lane: 0 }];

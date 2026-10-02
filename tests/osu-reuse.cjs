@@ -7,7 +7,7 @@ const ts = require('typescript');
 const moduleSource = fs.readFileSync('src/core/osu-preview.ts', 'utf8');
 const exportsObject = {};
 vm.runInNewContext(ts.transpileModule(moduleSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
-  { exports: exportsObject, require });
+  { exports: exportsObject, require: name => { if(name!=="./preview-scroll")return require(name); const scroll={};vm.runInNewContext(ts.transpileModule(fs.readFileSync("src/core/preview-scroll.ts","utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:scroll,require});return scroll; } });
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bms-osu-reuse-'));
 (async () => {
   fs.writeFileSync(path.join(dir, 'song.wav'), 'original song');

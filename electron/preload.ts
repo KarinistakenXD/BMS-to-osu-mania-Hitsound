@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const api = {
+  selectChartFolder: (kind: "bms" | "osu") => ipcRenderer.invoke("dialog:chartFolder", kind),
+  readStandaloneChart: (filePath: string, kind: "bms" | "osu") => ipcRenderer.invoke("core:readStandaloneChart", { filePath, kind }),
   selectBms: () => ipcRenderer.invoke("dialog:selectBms"),
   selectOsu: () => ipcRenderer.invoke("dialog:selectOsu"),
   showPairCheckDialog: (options: {

@@ -1,11 +1,11 @@
 /// <reference path="./bms2osu.d.ts" />
 
-import { mapBmsTime, synchronizeBmsToOsu, type SyncResult } from "./audio-sync";
+import { analyseBuffer, mapBmsTime, synchronizeBmsToOsu, type SampleAnalysis, type SyncResult } from "./audio-sync";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const logEl = $<HTMLDivElement>("log");
 const appendLog = (line: string) => {
-  logEl.textContent += line + "\n";
+  logEl.textContent += line.split(/\r?\n/).map(row => /^\[[^\]]+\]/.test(row) ? row : "[INFO] " + row).join("\n") + "\n";
   logEl.scrollTop = logEl.scrollHeight;
 };
 window.bms2osu.onLog(appendLog);
@@ -32,16 +32,19 @@ type NotePreviewMode = "converted" | "target" | "overlay";
 type ResnapMode = "fast" | "thorough";
 
 const state = {
+  standaloneKind: null as "bms" | "osu" | null,
+  nativeViewGrids: {} as Record<string, { timeMs: number; beat: boolean }[]>,
   analyzedReuseKey: "",
   bmsPath: "",
   osuPath: "",
   referenceEvents: [] as Note[],
   syncedEvents: [] as Note[],
   files: {} as Record<string, string>,
-  audioBuffers: new Map<string, AudioBuffer>(),
+  audioBuffers: new Map<string, SampleAnalysis>(),
   targetAudioBuffer: null as AudioBuffer | null,
   sync: null as SyncResult | null,
   timingPoints: [] as TimingPoint[],
+  scrollPoints: [] as { timeMs: number; multiplier: number }[],
   bmsBeatTimes: [] as number[],
   syncedBmsBeatTimes: [] as number[],
   phaseBeatLocks: [] as Array<{ targetIndex: number; targetMs: number; distanceMs: number } | null>,
@@ -108,12 +111,16 @@ const ffmpegStatus = $<HTMLDivElement>("ffmpeg-status");
 const oggOptions = $<HTMLDivElement>("ogg-options");
 
 function invalidateSelectedPair(message = "Selection changed — analyze this BMS / osu pair before previewing or converting."): void {
+  if (state.standaloneKind) { previewMode.value = "target-plus-keys"; notePreviewMode.value = "converted"; metronomeSource.value = "osu"; }
+  state.standaloneKind = null;
+  setStandaloneControls(false);
   state.analyzedReuseKey = "";
   stopPreview();
   state.sync = null;
   state.compatibilityOk = false;
   state.syncedEvents = [];
   state.syncedBmsBeatTimes = [];
+  state.nativeViewGrids = {};
   state.phaseBeatLocks = [];
   state.targetNotes = [];
   state.targetAnchorTimes = [];
@@ -139,47 +146,66 @@ function invalidateSelectedPair(message = "Selection changed — analyze this BM
   drawNotePreview();
 }
 
-btnBms.onclick = async () => {
-  const p = await window.bms2osu.selectBms();
-  if (p) {
-    state.bmsPath = p;
-    $<HTMLDivElement>("path-bms").textContent = p;
-    fileSummaryBms.textContent = p.split(/[\\/]/).pop() || p;
-    invalidateSelectedPair();
-    checkReady();
+type ChartFolder = { folder: string; charts: { path: string; label: string; keys: number }[]; warnings: string[]; defaultPath?: string };
+const chartFolders: Record<"bms" | "osu", ChartFolder | null> = { bms: null, osu: null };
+let chartSelectionBusy = false;
+let difficultySelectionRequest = 0;
+function refreshChartSelectors(): void {
+  for (const kind of ["bms", "osu"] as const) {
+    $<HTMLSelectElement>("difficulty-" + kind).disabled = chartSelectionBusy || !chartFolders[kind]?.charts.length;
   }
-};
-btnOsu.onclick = async () => {
-  btnOsu.disabled = true;
-  try {
-  const p = await window.bms2osu.selectOsu();
-  if (p) {
-    if (await reuseAnalyzedTarget(p)) return;
-    state.osuPath = p;
-    $<HTMLDivElement>("path-osu").textContent = p;
-    fileSummaryOsu.textContent = p.split(/[\\/]/).pop() || p;
-    invalidateSelectedPair();
-    checkReady();
-  }
-  } finally { btnOsu.disabled = false; }
-};
+}
+async function chooseDifficulty(kind: "bms" | "osu", file: string): Promise<void> {
+  if (chartSelectionBusy || !chartFolders[kind]?.charts.some(c => c.path === file)) return;
+  if ((kind === "bms" ? state.bmsPath : state.osuPath) === file) return;
+  const request = ++difficultySelectionRequest;
+  const reloadSingle = !!state.standaloneKind;
+  if (kind === "osu" && state.bmsPath && await reuseAnalyzedTarget(file, () => request === difficultySelectionRequest && !chartSelectionBusy)) return;
+  if (request !== difficultySelectionRequest || chartSelectionBusy) return;
+  if (kind === "bms") state.bmsPath = file; else state.osuPath = file;
+  $("path-" + kind).textContent = file;
+  (kind === "bms" ? fileSummaryBms : fileSummaryOsu).textContent = file.split(/[\\/]/).pop() || file;
+  invalidateSelectedPair("Difficulty changed. Choose Note preview, or analyze the selected pair."); checkReady();
+  if (reloadSingle && !(state.bmsPath && state.osuPath)) await loadStandalonePreview();
+}
+for (const kind of ["bms", "osu"] as const) {
+  const button = kind === "bms" ? btnBms : btnOsu;
+  const select = $<HTMLSelectElement>("difficulty-" + kind);
+  select.onchange = () => { void chooseDifficulty(kind, select.value); };
+  button.onclick = async () => {
+    if (chartSelectionBusy) return;
+    chartSelectionBusy = true; btnBms.disabled = true; btnOsu.disabled = true; refreshChartSelectors();
+    let folder: ChartFolder | null = null;
+    try { folder = await window.bms2osu.selectChartFolder(kind); }
+    catch (error) { appendLog("[ERROR] Folder selection: " + String(error)); }
+    finally { chartSelectionBusy = false; btnBms.disabled = false; btnOsu.disabled = false; refreshChartSelectors(); }
+    if (!folder?.charts.length) return;
+    chartFolders[kind] = folder; select.replaceChildren();
+    for (const chart of folder.charts) { const option = document.createElement("option");
+      option.value = chart.path; option.textContent = chart.label; option.title = chart.path; select.append(option); }
+    select.value = folder.defaultPath || folder.charts[0].path; refreshChartSelectors();
+    await chooseDifficulty(kind, select.value);
+  };
+}
 
-async function reuseAnalyzedTarget(osuPath: string): Promise<boolean> {
+async function reuseAnalyzedTarget(osuPath: string, selectionCurrent: () => boolean = () => true): Promise<boolean> {
   if (!state.compatibilityOk || !state.sync || !state.targetAudioBuffer || !state.analyzedReuseKey) return false;
   const bmsPath = state.bmsPath;
   const generation = preparationGeneration;
   const target = await window.bms2osu.readOsuPreview(osuPath, bmsPath) as {
     reuseKey: string;
     timingPoints: TimingPoint[];
+    scrollPoints?: { timeMs: number; multiplier: number }[];
     metadata: typeof state.metadata.osu;
     osuPreview: { mode: number; keys: number; notes: TargetPreviewNote[] };
   } | null;
-  if (!target?.reuseKey || target.reuseKey !== state.analyzedReuseKey ||
+  if (!selectionCurrent() || !target?.reuseKey || target.reuseKey !== state.analyzedReuseKey ||
       generation !== preparationGeneration || bmsPath !== state.bmsPath || !state.targetAudioBuffer) return false;
 
   state.osuPath = osuPath;
   state.metadata.osu = target.metadata;
   state.timingPoints = target.timingPoints;
+  state.scrollPoints = target.scrollPoints ?? [];
   state.targetMode = target.osuPreview.mode;
   state.targetKeys = target.osuPreview.keys;
   state.targetNotes = target.osuPreview.notes;
@@ -198,13 +224,43 @@ async function reuseAnalyzedTarget(osuPath: string): Promise<boolean> {
   void warmPreview();
   return true;
 }
-const checkReady = () => btnLoad.disabled = !(state.bmsPath && state.osuPath);
+const checkReady = () => {
+  btnLoad.disabled = !(state.bmsPath || state.osuPath);
+  btnLoad.textContent = state.bmsPath && state.osuPath ? "Analyze & synchronize" : "Note preview";
+  setStandaloneControls(!!(state.bmsPath || state.osuPath) && !(state.bmsPath && state.osuPath));
+};
 const formatTime = (sec: number) => `${Math.floor(Math.max(0, sec) / 60)}:${Math.floor(Math.max(0, sec) % 60).toString().padStart(2, "0")}`;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
+const previewLoading = $<HTMLDivElement>("preview-loading");
+const previewLoadingMessage = $<HTMLSpanElement>("preview-loading-message");
+const previewLoadingTitle = $<HTMLElement>("preview-loading-title");
+const previewLoadingSpinner = $<HTMLElement>("preview-loading-spinner");
+let previewLoadingKey: string | null = null;
+function showPreviewLoading(key: string, message: string): void {
+  previewLoadingKey = key;
+  previewLoading.hidden = false;
+  previewLoadingSpinner.hidden = false;
+  previewLoadingTitle.textContent = "Preparing preview";
+  previewLoadingMessage.textContent = message;
+  noteCanvas.setAttribute("aria-busy", "true");
+}
+function finishPreviewLoading(key: string, ready: boolean): void {
+  if (previewLoadingKey !== key) return;
+  if (ready) {
+    previewLoading.hidden = true; previewLoadingKey = null;
+    noteCanvas.setAttribute("aria-busy", "false");
+  } else {
+    previewLoadingSpinner.hidden = true;
+    previewLoadingTitle.textContent = "Preview could not be prepared";
+    previewLoadingMessage.textContent = "See Activity and retry Preview.";
+    noteCanvas.setAttribute("aria-busy", "false");
+  }
+}
+
 let audioCtx: AudioContext | null = null;
 const bytesToArrayBuffer = (bytes: Uint8Array) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-const describeSync = (s: SyncResult) => `Audio sync: ${s.mode}${s.mode === "affine" ? ` scale ${s.scale.toFixed(8)}` : ""}, offset ${s.offsetMs >= 0 ? "+" : ""}${s.offsetMs.toFixed(2)} ms, confidence ${s.confidence.toFixed(3)}, residual ${s.residualMs.toFixed(2)} ms`;
+const describeSync = (s: SyncResult) => `Audio sync: ${s.method ?? "onset"} / ${s.mode}${s.mode === "affine" ? ` scale ${s.scale.toFixed(8)}` : ""}, offset ${s.offsetMs >= 0 ? "+" : ""}${s.offsetMs.toFixed(2)} ms, confidence ${s.confidence.toFixed(3)}, residual ${s.residualMs.toFixed(2)} ms`;
 
 function normalizeIdentity(value: string): string[] {
   return value
@@ -774,9 +830,39 @@ function buildConvertedPlacement(keys: number): { notes: PlacedPreviewNote[]; sh
   return result;
 }
 
+let scrollTimelineSource: typeof state.scrollPoints | null = null;
+let scrollTimeline: { timeMs: number; multiplier: number; distance: number }[] = [];
+function scrollCoordinate(timeMs: number): number {
+  if (scrollTimelineSource !== state.scrollPoints) {
+    scrollTimelineSource = state.scrollPoints;
+    scrollTimeline = [];
+    let distance = 0, previousTime = 0, multiplier = 1;
+    for (const p of state.scrollPoints) {
+      distance += (p.timeMs - previousTime) * multiplier;
+      scrollTimeline.push({ ...p, distance });
+      previousTime = p.timeMs; multiplier = p.multiplier;
+    }
+  }
+  let lo = 0, hi = scrollTimeline.length;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (scrollTimeline[mid].timeMs <= timeMs) lo = mid + 1; else hi = mid; }
+  const p = scrollTimeline[lo - 1];
+  return p ? p.distance + (timeMs - p.timeMs) * p.multiplier : timeMs;
+}
+function previewScrollDistance(startMs: number, endMs: number): number {
+  return $<HTMLInputElement>("view-sv").checked ? scrollCoordinate(endMs) - scrollCoordinate(startMs) : endMs - startMs;
+}
+function previewVisibleEnd(nowMs: number, horizonMs: number): number {
+  if (!$<HTMLInputElement>("view-sv").checked) return nowMs + horizonMs;
+  let lo = nowMs, hi = Math.max(nowMs + horizonMs, state.songLengthMs);
+  for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2;
+    if (previewScrollDistance(nowMs, mid) < horizonMs) lo = mid; else hi = mid;
+  }
+  return hi;
+}
+$("view-sv").onchange = drawNotePreview;
 function noteY(timeMs: number, nowMs: number, horizonMs: number, pastMs: number, top: number, judgmentY: number, bottom: number): number {
   if (timeMs >= nowMs) {
-    const ratio = Math.min(1, (timeMs - nowMs) / horizonMs);
+    const ratio = Math.min(1, previewScrollDistance(nowMs, timeMs) / horizonMs);
     return judgmentY - ratio * (judgmentY - top);
   }
   const ratio = Math.min(1, (nowMs - timeMs) / pastMs);
@@ -800,7 +886,7 @@ function drawPreviewNote(
   // A hold remains visible until its tail reaches NOW; taps end at their head.
   const isHold = note.endTimeMs > note.timeMs + 1;
   const visibleEndMs = isHold ? note.endTimeMs : note.timeMs;
-  if (visibleEndMs < nowMs - .5 || note.timeMs > nowMs + horizonMs) return;
+  if (visibleEndMs < nowMs - .5 || previewScrollDistance(nowMs, Math.max(nowMs, note.timeMs)) > horizonMs) return;
   const keys = clamp(Math.max(1, sourceKeys), 1, MAX_OUTPUT_KEYS);
   const slotW = width / MAX_OUTPUT_KEYS;
   const playfieldW = slotW * keys;
@@ -845,7 +931,7 @@ function drawPreviewNote(
   }
   const noteH = Math.max(5, Math.min(10, laneW * .28));
   ctx.beginPath();
-  ctx.roundRect(x, yHead - noteH / 2, w, noteH, Math.min(4, noteH / 2));
+  ctx.roundRect(x, yHead - noteH, w, noteH, Math.min(4, noteH / 2));
   ctx.fill();
   ctx.lineWidth = leadMs <= 90 ? 1.55 : 1;
   ctx.stroke();
@@ -893,11 +979,14 @@ function updateKeyVisualizer(keys: number, notes: PlacedPreviewNote[], nowMs: nu
     }
   }
   const active = new Set<number>();
+  let kps = 0;
   for (const note of notes) {
-    const lead = note.timeMs - nowMs;
-    if (lead >= 0 && lead <= 55) active.add(note.lane);
-    if (note.timeMs > nowMs + 55) break;
+    if (note.timeMs > nowMs) break;
+    if (note.timeMs > nowMs - 1000) kps++;
+    const held = note.endTimeMs > note.timeMs && nowMs < note.endTimeMs;
+    if (held || nowMs < note.timeMs + 55) active.add(note.lane);
   }
+  $("key-kps").textContent = kps + " KPS";
   Array.from(keyVisualizer.children).forEach((el, lane) => el.classList.toggle("active", active.has(lane)));
 }
 
@@ -921,10 +1010,12 @@ function drawNotePreview(): void {
   const horizonMs = 11480 / scrollSpeed;
   const pastMs = 1;
   const nowMs = Number(timeline.value || 0) * 1000;
-  const mode = notePreviewMode.value as NotePreviewMode;
+  const mode: NotePreviewMode = state.standaloneKind ? "target" : notePreviewMode.value as NotePreviewMode;
   const outputKeys = clamp(Number(keysInput.value) || state.requiredKeys || 18, 1, MAX_OUTPUT_KEYS);
   const targetKeys = clamp(state.targetKeys || 4, 1, MAX_OUTPUT_KEYS);
-  const placement = buildConvertedPlacement(outputKeys);
+  const placement = state.standaloneKind
+    ? { notes: [] as PlacedPreviewNote[], shifted: 0, stacked: 0, nearShifted: 0, nearConflicts: 0 }
+    : buildConvertedPlacement(outputKeys);
 
   ctx.fillStyle = "rgba(255,255,255,.018)";
   ctx.fillRect(0, 0, width, height);
@@ -939,14 +1030,10 @@ function drawNotePreview(): void {
     drawPlayfieldGrid(ctx, targetKeys, width, top, bottom, "rgba(140,102,255,.92)", "rgba(140,102,255,.16)");
   }
 
-  if (state.timingPoints.length) {
-    const ticks = osuMetronomeTicks(nowMs, nowMs + horizonMs);
-    for (const tick of ticks) {
-      const y = noteY(tick.timeMs, nowMs, horizonMs, pastMs, top, judgmentY, bottom);
-      ctx.strokeStyle = tick.accent ? "rgba(255,255,255,.16)" : "rgba(255,255,255,.055)";
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-    }
+  for (const line of viewGridLines(nowMs, previewVisibleEnd(nowMs, horizonMs))) {
+    const y = noteY(line.timeMs, nowMs, horizonMs, pastMs, top, judgmentY, bottom);
+    ctx.strokeStyle = line.beat ? "rgba(255,255,255,.16)" : "rgba(255,153,199,.08)";
+    ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
   }
 
   ctx.strokeStyle = "rgba(255,255,255,.9)";
@@ -963,9 +1050,11 @@ function drawNotePreview(): void {
     for (const note of placement.notes) drawPreviewNote(ctx, note, outputKeys, "converted", nowMs, horizonMs, pastMs, width, top, judgmentY, bottom, note.isBgm);
   }
 
-  updateKeyVisualizer(outputKeys, placement.notes, nowMs);
+  updateKeyVisualizer(state.standaloneKind ? targetKeys : outputKeys, state.standaloneKind ? state.targetNotes as PlacedPreviewNote[] : placement.notes, nowMs);
 
-  if (!state.sync) {
+  if (state.standaloneKind) {
+    notePreviewInfo.textContent = `Original ${state.standaloneKind === "bms" ? "BMS" : "osu!mania"} · ${targetKeys} ${state.standaloneKind === "bms" ? "lanes" : "keys"} · ${state.targetNotes.length} notes · speed ${scrollSpeed}`;
+  } else if (!state.sync) {
     notePreviewInfo.textContent = "Analyze maps to preview notes";
   } else if ((mode === "target" || mode === "overlay") && state.targetMode !== 3) {
     notePreviewInfo.textContent = `Target Mode ${state.targetMode} is not osu!mania · converted ${placement.notes.length} notes`;
@@ -980,7 +1069,7 @@ function drawNotePreview(): void {
 }
 
 function drawWaveform(): void {
-  const b = state.targetAudioBuffer;
+  const b = state.standaloneKind === "bms" ? state.referenceMixBuffer ?? state.targetAudioBuffer : state.targetAudioBuffer;
   const rect = canvas.getBoundingClientRect();
   const dpr = devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.floor(rect.width * dpr));
@@ -1040,6 +1129,7 @@ function currentRate(): number {
   return clamp(Number(playbackRate.value) || 1, .25, 2);
 }
 function currentHitsoundGain(): number {
+  if (state.standaloneKind) return 1;
   return clamp(Number(hitsoundVolume.value) || 0, 0, 100) / 100;
 }
 function currentAudioGain(): number {
@@ -1050,7 +1140,8 @@ function refreshVolumeLabels(): void {
   hitsoundVolumeOut.value = `${Math.round(Number(hitsoundVolume.value))}%`;
   audioVolumeOut.value = `${Math.round(Number(audioVolume.value))}%`;
   oggQualityOut.value = `q${Number(oggQuality.value).toFixed(1)}`;
-  if (activeTargetGain) activeTargetGain.gain.value = currentAudioGain();
+  if (activeMasterGain) activeMasterGain.gain.value = state.standaloneKind ? currentAudioGain() : 1;
+  if (activeTargetGain) activeTargetGain.gain.value = state.standaloneKind ? 1 : currentAudioGain();
   if (activeSampleGain) activeSampleGain.gain.value = currentHitsoundGain();
 }
 
@@ -1200,17 +1291,10 @@ timeline.oninput = () => {
   setPosition(Number(timeline.value));
   if (previewPlaying) void startPreview(Number(timeline.value));
 };
-waveWrap.onclick = ev => {
-  if (!state.songLengthMs) return;
-  const r = waveWrap.getBoundingClientRect();
-  const sec = ((ev.clientX - r.left) / r.width) * (state.songLengthMs / 1000);
-  setPosition(sec);
-  if (previewPlaying) void startPreview(sec);
-};
 window.addEventListener("resize", () => { drawWaveform(); drawNotePreview(); });
 
 resnap.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSettingsChanged(); };
-snapTolerance.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSettingsChanged(); };
+snapTolerance.oninput = () => { stopPreview(); invalidatePreviewAudio(); drawNotePreview(); scheduleTimingPreview(); };
 resnapMode.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previewSettingsChanged(); };
 previewMode.onchange = previewSettingsChanged;
 metronomeEnabled.onchange = () => { refreshMetronomeUi(); if (previewPlaying) void startPreview(Number(timeline.value)); };
@@ -1231,6 +1315,13 @@ keysInput.oninput = () => {
 };
 
 btnLoad.onclick = async () => {
+  if (chartSelectionBusy) return;
+  chartSelectionBusy = true; btnBms.disabled = true; btnOsu.disabled = true; refreshChartSelectors();
+  if (!(state.bmsPath && state.osuPath)) { await loadStandalonePreview(); return; }
+  state.standaloneKind = null;
+  setStandaloneControls(false);
+  showPreviewLoading("analysis", "Analyzing samples and synchronizing timing…");
+  try {
   state.analyzedReuseKey = "";
   audioCtx ??= new AudioContext();
   stopPreview();
@@ -1238,6 +1329,7 @@ btnLoad.onclick = async () => {
   btnConvert.disabled = true;
   btnPlay.disabled = true;
   state.sync = null;
+  manualSync.value = "0";
   invalidatePreviewAudio();
   state.audioBuffers.clear();
   state.targetAudioBuffer = null;
@@ -1257,6 +1349,7 @@ btnLoad.onclick = async () => {
     osuAudioPath: string | null;
     timingPoints: TimingPoint[];
     bmsBeatTimes: number[];
+    scrollPoints?: { timeMs: number; multiplier: number }[];
     metadata: { bms: { title: string; artist: string }; osu: { title: string; artist: string; creator: string; version: string } };
     osuPreview: { mode: number; keys: number; notes: TargetPreviewNote[] };
     reuseKey: string;
@@ -1269,6 +1362,7 @@ btnLoad.onclick = async () => {
   state.files = data.files;
   state.referenceEvents = data.notes;
   state.timingPoints = data.timingPoints ?? [];
+  state.scrollPoints = data.scrollPoints ?? [];
   state.bmsBeatTimes = data.bmsBeatTimes ?? [];
   state.targetMode = data.osuPreview?.mode ?? 0;
   state.targetKeys = data.osuPreview?.keys ?? 4;
@@ -1312,7 +1406,7 @@ btnLoad.onclick = async () => {
         for (let i = 0; i < d.length; i += stride) peak = Math.max(peak, Math.abs(d[i]));
       }
       if (peak < .001) silent++;
-      else state.audioBuffers.set(id, b);
+      else state.audioBuffers.set(id, analyseBuffer(b));
     } catch {
       failed++;
     }
@@ -1329,6 +1423,7 @@ btnLoad.onclick = async () => {
   try {
     state.sync = synchronizeBmsToOsu(usable, state.audioBuffers, state.targetAudioBuffer);
     appendLog(describeSync(state.sync));
+    for (const candidate of state.sync.alternatives ?? []) appendLog(`Sync evidence ${candidate.method}: confidence ${candidate.confidence.toFixed(3)}, residual ${candidate.residualMs.toFixed(2)} ms`);
   } catch (e) {
     appendLog(`[ERROR] Synchronization failed: ${e instanceof Error ? e.message : String(e)}`);
     btnLoad.disabled = false;
@@ -1421,6 +1516,8 @@ btnLoad.onclick = async () => {
 
   state.compatibilityOk = true;
   state.analyzedReuseKey = data.reuseKey;
+  // Start audio work before the final canvas/layout work.
+  void warmPreview();
   updateAutoKeyBounds();
   fileSummaryBms.textContent = `${state.bmsPath.split(/[\\/]/).pop() || state.bmsPath} · ${state.syncedEvents.length} audible events`;
   fileSummaryOsu.textContent = `${state.osuPath.split(/[\\/]/).pop() || state.osuPath} · ${state.targetKeys}K · ${state.targetNotes.length} objects`;
@@ -1430,9 +1527,15 @@ btnLoad.onclick = async () => {
   timeTotal.textContent = formatTime(state.songLengthMs / 1000);
   drawWaveform();
   statusEl.textContent = `Synchronized ${state.syncedEvents.length} audible BMS events. Target osu audio remains the default preview reference; BMS-native metronome is available as an alternate check.`;
-  void warmPreview();
   btnConvert.disabled = false;
   btnLoad.disabled = false;
+  } finally {
+    chartSelectionBusy = false; btnBms.disabled = false; btnOsu.disabled = false; refreshChartSelectors();
+    if (previewLoadingKey === "analysis") {
+      previewLoading.hidden = true; previewLoadingKey = null;
+      noteCanvas.setAttribute("aria-busy", "false");
+    }
+  }
 };
 
 /* ------------------------------------------------------------------ */
@@ -1442,6 +1545,7 @@ let targetSource: AudioBufferSourceNode | null = null;
 let keyBusSource: AudioBufferSourceNode | null = null;
 let keySources: AudioBufferSourceNode[] = [];
 let metronomeSources: AudioBufferSourceNode[] = [];
+let activeMasterGain: GainNode | null = null;
 let activeTargetGain: GainNode | null = null;
 let activeSampleGain: GainNode | null = null;
 let previewTimer = 0;
@@ -1563,19 +1667,92 @@ async function renderEventBus(events: Note[]): Promise<AudioBuffer | null> {
   if (!audioCtx || !state.targetAudioBuffer || !events.length) return null;
   const sr = state.targetAudioBuffer.sampleRate;
   const frames = Math.max(1, Math.ceil((state.songLengthMs / 1000 + 1) * sr));
-  const offline = new OfflineAudioContext(2, frames, sr);
-  let scheduled = 0;
-  for (const event of events) {
-    const buffer = state.audioBuffers.get(event.wavId);
-    if (!buffer || event.timeMs < 0 || event.timeMs / 1000 >= state.songLengthMs / 1000 + 1) continue;
-    const source = offline.createBufferSource();
-    source.buffer = buffer;
-    source.connect(offline.destination);
-    source.start(event.timeMs / 1000);
-    scheduled++;
+  const generation = preparationGeneration;
+  const output = audioCtx.createBuffer(2, frames, sr);
+  const started = performance.now();
+  const decoded = new Map<string, AudioBuffer>();
+  let cachedBytes = 0;
+  let decodeCount = 0;
+  const cacheLimit = 32 * 1024 * 1024;
+  appendLog(`Preparing BMS preview: ${events.length} events, ${Math.ceil(frames / sr)} seconds…`);
+  // Batch sample PCM at 32 MiB (or one larger sample) inside ten-second windows.
+  // A separate temporary 32 MiB LRU avoids re-decoding common samples.
+  // Only the song bus persists after this function returns.
+  for (let start = 0; start < frames; start += sr * 10) {
+    const count = Math.min(sr * 10, frames - start);
+    if (generation !== preparationGeneration) throw new Error("Preview inputs changed");
+    if (previewLoadingKey === preparationKey(previewMode.value as PreviewMode, currentRate())) previewLoadingMessage.textContent = `Audio prepared: ${Math.floor(start / sr)} / ${Math.ceil(frames / sr)} s of song · elapsed ${((performance.now() - started) / 1000).toFixed(1)} s`;
+    if (start === 0 || Math.floor(start / sr) % 30 === 0) appendLog(`Audio prepared: ${Math.floor(start / sr)} / ${Math.ceil(frames / sr)} s of song · elapsed ${((performance.now() - started) / 1000).toFixed(1)} s`);
+    let offline = new OfflineAudioContext(2, count, sr);
+    const mix = audioCtx.createBuffer(2, count, sr);
+    let batchBytes = 0;
+    let scheduled = 0;
+    const flush = async () => {
+      if (!scheduled) return;
+      const chunk = await offline.startRendering();
+      for (let c = 0; c < 2; c++) {
+        const dst = mix.getChannelData(c), src = chunk.getChannelData(c);
+        for (let i = 0; i < count; i++) dst[i] += src[i];
+      }
+      offline = new OfflineAudioContext(2, count, sr);
+      scheduled = 0; batchBytes = 0;
+    };
+    const protectedContext = new OfflineAudioContext(2, count, sr);
+    const bus = protectedContext.createGain();
+    bus.gain.value = 0.8;
+    const protection = protectedContext.createWaveShaper();
+    protection.curve = Float32Array.from({ length: 65537 }, (_, i) => {
+      const x = i / 32768 - 1;
+      const a = Math.abs(x);
+      return Math.sign(x) * (a <= .8 ? a : .8 + .17 * (1 - Math.exp(-(a - .8) / .17)));
+    });
+    bus.connect(protection); protection.connect(protectedContext.destination);
+    const grouped = new Map<string, Note[]>();
+    for (const event of events) {
+      const sample = state.audioBuffers.get(event.wavId);
+      if (!sample || event.timeMs >= (start + count) / sr * 1000 || event.timeMs + sample.durationMs <= start / sr * 1000) continue;
+      const group = grouped.get(event.wavId) ?? []; group.push(event); grouped.set(event.wavId, group);
+    }
+    for (const [id, group] of grouped) {
+      const size = state.audioBuffers.get(id)!.pcmBytes;
+      if (batchBytes + size > 32 * 1024 * 1024) await flush();
+      batchBytes += size;
+      let buffer = decoded.get(id);
+      if (buffer) { decoded.delete(id); decoded.set(id, buffer); }
+      else {
+        const bytes = await window.bms2osu.readAudioFile(state.files[id]);
+        if (!bytes?.length) throw new Error('Preview sample unavailable: ' + id);
+        buffer = await audioCtx.decodeAudioData(bytesToArrayBuffer(bytes));
+        decodeCount++;
+        const actualBytes = buffer.length * buffer.numberOfChannels * 4;
+        if (actualBytes <= cacheLimit) {
+          while (cachedBytes + actualBytes > cacheLimit && decoded.size) {
+            const oldest = decoded.keys().next().value!;
+            const removed = decoded.get(oldest)!;
+            cachedBytes -= removed.length * removed.numberOfChannels * 4;
+            decoded.delete(oldest);
+          }
+          decoded.set(id, buffer); cachedBytes += actualBytes;
+        }
+      }
+      if (generation !== preparationGeneration) throw new Error('Preview inputs changed');
+      for (const event of group) {
+        const source = offline.createBufferSource(); source.buffer = buffer; source.connect(offline.destination);
+        const relative = event.timeMs / 1000 - start / sr;
+        source.start(Math.max(0, relative), Math.max(0, -relative)); scheduled++;
+      }
+    }
+    await flush();
+    {
+      const source = protectedContext.createBufferSource();
+      source.buffer = mix; source.connect(bus); source.start();
+      const chunk = await protectedContext.startRendering();
+      if (generation !== preparationGeneration) throw new Error('Preview inputs changed');
+      for (let c = 0; c < 2; c++) output.getChannelData(c).set(chunk.getChannelData(c), start);
+    }
   }
-  if (!scheduled) return null;
-  return await offline.startRendering();
+  appendLog(`BMS preview ready in ${((performance.now() - started) / 1000).toFixed(2)} s; ${decodeCount} sample decodes; temporary cache ${(cachedBytes / 1048576).toFixed(1)} MiB.`);
+  return output;
 }
 
 async function previewMixBuffer(mode: PreviewMode): Promise<AudioBuffer | null> {
@@ -1680,7 +1857,10 @@ function stopPreview(): void {
   previewTickIndex = 0;
   previewScheduledUntilSec = 0;
   previewPlaying = false;
+  btnPlay.classList.remove("transport-active");
+  btnPause.classList.remove("transport-active");
   resetVisualMetronome();
+  activeMasterGain = null;
   activeTargetGain = null;
   activeSampleGain = null;
   cancelAnimationFrame(previewTimer);
@@ -1789,7 +1969,7 @@ function scheduleMetronomeTick(tick: MetronomeTick, rate: number): void {
   source.playbackRate.value = 1;
   gain.gain.value = tick.accent ? .42 : .28;
   source.connect(gain);
-  gain.connect(audioCtx.destination);
+  gain.connect(activeMasterGain ?? audioCtx.destination);
   source.start(Math.max(when, audioCtx.currentTime + .002));
   source.onended = () => {
     try { source.disconnect(); } catch {}
@@ -1828,7 +2008,12 @@ function preparePreview(mode: PreviewMode, rate: number): Promise<PreparedPrevie
   const generation = preparationGeneration;
   const job = (async () => {
     if (!audioCtx || !state.targetAudioBuffer) throw new Error("No analyzed audio");
-  const rawMix = await previewMixBuffer(mode);
+  const [rawMix, independentTarget] = await Promise.all([
+    previewMixBuffer(mode),
+    mode !== "target-plus-keys" && shouldPlayTarget(mode)
+      ? tempoProcessedBuffer(state.targetAudioBuffer, rate, "target")
+      : Promise.resolve(null),
+  ]);
   if (generation !== preparationGeneration) throw new Error("Preview inputs changed");
   let pairedPreview: AudioBuffer | null = null;
   let targetPreview: AudioBuffer | null = null;
@@ -1842,7 +2027,7 @@ function preparePreview(mode: PreviewMode, rate: number): Promise<PreparedPrevie
   }
   if (!pairedPreview && !(mode === "target-plus-keys" && rawMix && Math.abs(rate - 1) > 1e-6)) {
     targetPreview = shouldPlayTarget(mode)
-      ? await tempoProcessedBuffer(state.targetAudioBuffer, rate, "target")
+      ? independentTarget ?? await tempoProcessedBuffer(state.targetAudioBuffer, rate, "target")
       : null;
     mixPreview = rawMix
       ? await tempoProcessedBuffer(rawMix, rate, mode === "bms-reference" ? "reference" : "converted")
@@ -1876,12 +2061,15 @@ async function warmPreview(): Promise<void> {
   const rate = currentRate();
   const key = preparationKey(mode, rate);
   if (preparedPreviews.has(key)) {
-    btnPlay.textContent = "▶ Preview";
+    showPreviewLoading(key, "Preview ready");
+    finishPreviewLoading(key, true);
+    btnPlay.textContent = "▶"; btnPlay.title = "Play preview";
     btnPlay.disabled = previewPlaying || !state.compatibilityOk;
     return;
   }
   btnPlay.disabled = true;
-  btnPlay.textContent = "Preparing…";
+  btnPlay.textContent = "▶"; btnPlay.title = "Preparing audio…";
+  showPreviewLoading(key, "Preparing synchronized audio and note timing…");
   try {
     await preparePreview(mode, rate);
   } catch (error) {
@@ -1889,7 +2077,9 @@ async function warmPreview(): Promise<void> {
       appendLog("[WARN] " + (error instanceof Error ? error.message : String(error)));
   } finally {
     if (key === preparationKey(previewMode.value as PreviewMode, currentRate())) {
-      btnPlay.textContent = "▶ Preview";
+      const ready = preparedPreviews.has(key);
+      finishPreviewLoading(key, ready);
+      btnPlay.textContent = "▶"; btnPlay.title = ready ? "Play preview" : "Retry preview";
       btnPlay.disabled = previewPlaying || !state.compatibilityOk;
     }
   }
@@ -1897,6 +2087,11 @@ async function warmPreview(): Promise<void> {
 function previewSettingsChanged(): void {
   if (previewPlaying) void startPreview(Number(timeline.value));
   else { stopPreview(); void warmPreview(); }
+}
+let timingPreviewTimer = 0;
+function scheduleTimingPreview(): void {
+  window.clearTimeout(timingPreviewTimer);
+  timingPreviewTimer = window.setTimeout(previewSettingsChanged, 300);
 }
 
 async function startPreview(startSec: number): Promise<void> {
@@ -1917,24 +2112,30 @@ async function startPreview(startSec: number): Promise<void> {
   const key = preparationKey(mode, rate);
   let prepared = preparedPreviews.get(key);
   if (!prepared) {
-    try { prepared = await preparePreview(mode, rate); }
-    catch { if (request === transportRequest) btnPlay.disabled = false; return; }
+    showPreviewLoading(key, "Preparing synchronized audio and note timing…");
+    try { prepared = await preparePreview(mode, rate); finishPreviewLoading(key, true); }
+    catch { if (request === transportRequest) { finishPreviewLoading(key, false); btnPlay.disabled = false; } return; }
   }
   if (request !== transportRequest || key !== preparationKey(previewMode.value as PreviewMode, currentRate())) return;
   const { pairedPreview, targetPreview, mixPreview } = prepared;
 
   previewPlaying = true;
+  btnPlay.classList.add("transport-active");
+  btnPause.classList.remove("transport-active");
   previewStartSec = startSec;
   previewStartedAt = audioCtx.currentTime + PREVIEW_START_LEAD_SEC;
   btnPlay.disabled = true;
   btnPause.disabled = false;
 
+  activeMasterGain = audioCtx.createGain();
+  activeMasterGain.gain.value = state.standaloneKind ? currentAudioGain() : 1;
+  activeMasterGain.connect(audioCtx.destination);
   activeTargetGain = audioCtx.createGain();
-  activeTargetGain.gain.value = currentAudioGain();
-  activeTargetGain.connect(audioCtx.destination);
+  activeTargetGain.gain.value = state.standaloneKind ? 1 : currentAudioGain();
+  activeTargetGain.connect(activeMasterGain);
   activeSampleGain = audioCtx.createGain();
   activeSampleGain.gain.value = currentHitsoundGain();
-  activeSampleGain.connect(audioCtx.destination);
+  activeSampleGain.connect(activeMasterGain);
 
   const stretchedOffset = Math.max(0, startSec / rate);
   if (pairedPreview && pairedPreview.numberOfChannels >= 4 && stretchedOffset < pairedPreview.duration) {
@@ -1986,7 +2187,7 @@ async function startPreview(startSec: number): Promise<void> {
 }
 
 btnPlay.onclick = () => { void startPreview(Number(timeline.value)); };
-btnPause.onclick = stopPreview;
+btnPause.onclick = () => { stopPreview(); btnPause.classList.add("transport-active"); };
 
 document.addEventListener("keydown", (event) => {
   if (event.code !== "Space" || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
@@ -1996,7 +2197,7 @@ document.addEventListener("keydown", (event) => {
   if (tag === "textarea" || target?.isContentEditable || (tag === "input" && ["text", "number"].includes(inputType))) return;
   if (!state.compatibilityOk || !state.targetAudioBuffer) return;
   event.preventDefault();
-  if (previewPlaying) stopPreview();
+  if (previewPlaying) { stopPreview(); btnPause.classList.add("transport-active"); }
   else void startPreview(Number(timeline.value));
 });
 
@@ -2004,7 +2205,7 @@ document.addEventListener("keydown", (event) => {
 /* Conversion + sample export                                         */
 /* ------------------------------------------------------------------ */
 btnConvert.onclick = async () => {
-  if (!state.sync || !state.compatibilityOk) {
+  if (state.standaloneKind || !state.sync || !state.compatibilityOk) {
     appendLog("[ERROR] Analyze and pass the BMS / osu pair verification first.");
     return;
   }
@@ -2108,3 +2309,202 @@ refreshMetronomeUi();
 refreshSampleFormatUi();
 drawWaveform();
 drawNotePreview();
+
+const manualSync = $<HTMLInputElement>("manual-sync-ms");
+manualSync.oninput = () => {
+  if (!state.sync) return;
+  const value = Number(manualSync.value);
+  if (!manualSync.value.trim() || !Number.isFinite(value) || value === (state.sync.manualCorrectionMs ?? 0)) return;
+  stopPreview();
+  state.sync.manualCorrectionMs = value;
+  state.syncedEvents = state.syncedEvents.map(n => ({ ...n, timeMs: mapBmsTime(n.sourceTimeMs ?? n.timeMs, state.sync!) }));
+  state.syncedBmsBeatTimes = state.bmsBeatTimes.map(t => mapBmsTime(t, state.sync!));
+  state.referenceMixBuffer = null;
+  state.tempoMixBuffers.clear();
+  state.songLengthMs = Math.max(state.targetAudioBuffer?.duration ? state.targetAudioBuffer.duration * 1000 : 0,
+    state.targetNotes.reduce((end, n) => Math.max(end, n.endTimeMs), 0),
+    state.syncedEvents.reduce((end, n) => Math.max(end, n.timeMs + (state.audioBuffers.get(n.wavId)?.durationMs ?? 0)), 0));
+  timeline.max = String(state.songLengthMs / 1000);
+  invalidatePreviewAudio(); rebuildPhaseBeatLocks(); drawNotePreview();
+  appendLog('Manual sync correction: ' + value + ' ms after automatic mapping (positive = later).');
+  $("sync-status").textContent = `Manual correction ${value >= 0 ? "+" : ""}${value} ms · automatic alignment retained. Notes updated; preview audio is being prepared.`;
+  scheduleTimingPreview();
+};
+manualSync.onchange = manualSync.oninput;
+
+function setStandaloneControls(single: boolean): void {
+  const kind = state.standaloneKind ?? (state.bmsPath && !state.osuPath ? "bms" : "osu");
+  for (const option of Array.from(metronomeSource.options)) {
+    option.hidden = single && option.value !== kind;
+    option.disabled = option.hidden;
+  }
+  if (single) metronomeSource.value = kind;
+  $("wave-reference-label").textContent = single ? (kind === "bms" ? "Original BMS audio" : "Original osu!mania song") : "Target osu audio reference";
+  previewMode.disabled = single; notePreviewMode.disabled = single;
+  const nativeOption = notePreviewMode.querySelector<HTMLOptionElement>('option[value="target"]');
+  if (nativeOption) nativeOption.textContent = single ? (kind === "bms" ? "Original BMS chart" : "Original osu!mania chart") : "Target osu! difficulty";
+  resnap.disabled = single; snapTolerance.disabled = single; resnapMode.disabled = single; manualSync.disabled = single;
+  keysInput.disabled = single;
+  if (!single) { keysInput.min = String(Math.min(MAX_OUTPUT_KEYS, Math.max(1, state.requiredKeys))); keysInput.max = String(MAX_OUTPUT_KEYS); }
+  hitsoundVolume.disabled = single; audioVolume.disabled = false;
+  $("audio-volume-label").textContent = single ? "Master volume" : "Audio volume";
+  $("audio-volume-hint").textContent = single ? "all preview audio" : "preview comparison only";
+  sampleFormat.disabled = single; oggQuality.disabled = single; conflictPolicy.disabled = single;
+  if (single) btnConvert.disabled = true;
+}
+async function loadStandalonePreview(): Promise<void> {
+  const kind = state.bmsPath ? "bms" : "osu";
+  const selectedPath = kind === "bms" ? state.bmsPath : state.osuPath;
+  if (!selectedPath) return;
+  invalidateSelectedPair("Loading original chart…");
+  chartSelectionBusy = true; refreshChartSelectors();
+  state.standaloneKind = kind; setStandaloneControls(true);
+  btnLoad.disabled = true; btnBms.disabled = true; btnOsu.disabled = true;
+  $("btn-clear-bms").setAttribute("disabled", ""); $("btn-clear-osu").setAttribute("disabled", "");
+  showPreviewLoading("standalone", "Loading original notes…");
+  try {
+    const chart = await window.bms2osu.readStandaloneChart(selectedPath, kind) as {
+      keys: number; notes: TargetPreviewNote[]; events: Note[]; files: Record<string, string>;
+      timingPoints: TimingPoint[]; beatTimes: number[]; audioPath: string | null; title: string; warnings: string[];
+      viewGrids?: Record<string, { timeMs: number; beat: boolean }[]>;
+      scrollPoints?: { timeMs: number; multiplier: number }[];
+    };
+    state.nativeViewGrids = chart.viewGrids ?? {};
+    state.scrollPoints = chart.scrollPoints ?? [];
+    state.targetMode = 3; state.targetKeys = chart.keys; state.targetNotes = chart.notes;
+    state.timingPoints = chart.timingPoints; state.bmsBeatTimes = chart.beatTimes; state.syncedBmsBeatTimes = chart.beatTimes;
+    state.referenceEvents = chart.events; state.syncedEvents = chart.events; state.files = chart.files;
+    state.songLengthMs = chart.notes.reduce((end, n) => Math.max(end, n.endTimeMs), 0);
+    keysInput.min = String(chart.keys); keysInput.max = String(chart.keys);
+    keysInput.value = String(chart.keys); notePreviewMode.value = "target";
+    for (const warning of chart.warnings) appendLog("[CHART] " + warning);
+    audioCtx ??= new AudioContext();
+    if (kind === "osu") {
+      previewMode.value = "target-only"; metronomeSource.value = "osu";
+      if (chart.audioPath) {
+        try { const bytes = await window.bms2osu.readAudioFile(chart.audioPath);
+          if (bytes?.length) state.targetAudioBuffer = await audioCtx.decodeAudioData(bytesToArrayBuffer(bytes));
+        } catch (error) { appendLog("[WARN] Song audio unavailable: " + String(error)); }
+      }
+      state.songLengthMs = Math.max(state.songLengthMs, (state.targetAudioBuffer?.duration ?? 0) * 1000);
+    } else {
+      previewMode.value = "bms-reference"; metronomeSource.value = "bms";
+      for (const [id, file] of Object.entries(chart.files)) {
+        try { const bytes = await window.bms2osu.readAudioFile(file);
+          if (!bytes?.length) continue;
+          const buffer = await audioCtx.decodeAudioData(bytesToArrayBuffer(bytes));
+          state.audioBuffers.set(id, analyseBuffer(buffer));
+        } catch (error) { appendLog("[WARN] Sample " + id + ": " + String(error)); }
+      }
+      for (const event of chart.events) state.songLengthMs = Math.max(state.songLengthMs, event.timeMs + (state.audioBuffers.get(event.wavId)?.durationMs ?? 0));
+      if (state.audioBuffers.size) state.targetAudioBuffer = audioCtx.createBuffer(2, 1, audioCtx.sampleRate);
+    }
+    timeline.max = String(Math.max(1, state.songLengthMs / 1000)); timeline.disabled = false;
+    timeTotal.textContent = formatTime(state.songLengthMs / 1000); setPosition(0);
+    statusEl.textContent = "Original " + (kind === "bms" ? "BMS" : "osu!mania") + " chart loaded — native lanes and timing; no conversion or resnap.";
+    state.compatibilityOk = !!state.targetAudioBuffer;
+    if (state.compatibilityOk) await warmPreview();
+    else { finishPreviewLoading("standalone", true); appendLog("Notes ready. Audio is unavailable; the timeline can still inspect the pattern."); }
+    drawNotePreview(); drawWaveform();
+  } catch (error) {
+    finishPreviewLoading("standalone", false); appendLog("[ERROR] Chart preview: " + String(error));
+  } finally { chartSelectionBusy = false; refreshChartSelectors(); btnBms.disabled = false; btnOsu.disabled = false;
+    $("btn-clear-bms").removeAttribute("disabled"); $("btn-clear-osu").removeAttribute("disabled");
+    checkReady(); btnConvert.disabled = true; }
+}
+for (const kind of ["bms", "osu"] as const) {
+  $("btn-clear-" + kind).onclick = () => {
+    if (chartSelectionBusy) return;
+    chartFolders[kind] = null;
+    const select = $<HTMLSelectElement>("difficulty-" + kind);
+    select.replaceChildren(); const empty = document.createElement("option"); empty.textContent = "No folder selected"; select.append(empty); refreshChartSelectors();
+    if (kind === "bms") state.bmsPath = ""; else state.osuPath = "";
+    if (kind === "bms") fileSummaryBms.textContent = "No BMS selected"; else fileSummaryOsu.textContent = "No osu! map selected";
+    $("path-" + kind).textContent = "No " + (kind === "bms" ? "BMS" : "osu! map") + " selected";
+    invalidateSelectedPair("Choose Note preview for one chart, or select both files to synchronize."); checkReady();
+  };
+}
+
+function viewDivision(): number { return clamp(Number($<HTMLSelectElement>("view-division").value) || 4, 1, 16); }
+function viewGridLines(startMs: number, endMs: number): { timeMs: number; beat: boolean }[] {
+  const lines: { timeMs: number; beat: boolean }[] = [];
+  const division = viewDivision();
+  if (state.standaloneKind === "bms" && state.nativeViewGrids[division])
+    return state.nativeViewGrids[division].filter(line => line.timeMs >= startMs && line.timeMs <= endMs);
+  if (state.standaloneKind === "bms") {
+    const beats = state.syncedBmsBeatTimes;
+    for (let i = 0; i + 1 < beats.length; i++) {
+      if (beats[i + 1] < startMs) continue; if (beats[i] > endMs) break;
+      for (let n = 0; n < division; n++) { const timeMs = beats[i] + (beats[i + 1] - beats[i]) * n / division;
+        if (timeMs >= startMs && timeMs <= endMs) lines.push({ timeMs, beat: n === 0 }); }
+    }
+  } else for (let i = 0; i < state.timingPoints.length; i++) {
+    const tp = state.timingPoints[i], end = Math.min(endMs, state.timingPoints[i + 1]?.timeMs ?? endMs);
+    const step = tp.beatLength / division; if (!(step > 0)) continue;
+    for (let n = Math.max(0, Math.ceil((startMs - tp.timeMs) / step)); tp.timeMs + n * step < end; n++)
+      lines.push({ timeMs: tp.timeMs + n * step, beat: n % division === 0 });
+  }
+  return lines;
+}
+function viewScrollStep(timeMs: number, direction = 1): number {
+  const grid = state.standaloneKind === "bms" ? state.nativeViewGrids[viewDivision()] : null;
+  if (grid?.length) {
+    let lo = 0, hi = grid.length;
+    const boundary = timeMs + (direction > 0 ? .001 : -.001);
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (grid[mid].timeMs < boundary) lo = mid + 1; else hi = mid; }
+    const next = grid[direction > 0 ? lo : lo - 1];
+    if (next) return Math.abs(next.timeMs - timeMs) / 1000;
+  }
+  if (state.standaloneKind === "bms" && state.syncedBmsBeatTimes.length > 1) {
+    const i = clamp(nearestIndex(state.syncedBmsBeatTimes, timeMs), 0, state.syncedBmsBeatTimes.length - 2);
+    return (state.syncedBmsBeatTimes[i + 1] - state.syncedBmsBeatTimes[i]) / viewDivision() / 1000;
+  }
+  return (activeTimingPoint(timeMs)?.beatLength ?? 500) / viewDivision() / 1000;
+}
+$("view-division").onchange = drawNotePreview;
+let seekResume = false;
+let seekResumeTimer = 0;
+let seekTransport = 0;
+function beginPreviewSeek(): void {
+  window.clearTimeout(seekResumeTimer);
+  seekResume = seekResume || previewPlaying;
+  if (previewPlaying) stopPreview();
+  seekTransport = transportRequest;
+}
+function finishPreviewSeek(): void {
+  if (!seekResume) return;
+  if (seekTransport !== transportRequest) { seekResume = false; return; }
+  seekResume = false; void startPreview(Number(timeline.value));
+}
+for (const surface of [waveWrap, noteCanvas] as HTMLElement[]) {
+  let drag: { id: number; button: number; x: number; y: number; sec: number } | null = null;
+  const positionFor = (ev: PointerEvent) => {
+    if (!drag) return;
+    const rect = surface.getBoundingClientRect();
+    const sec = drag.button === 0 ? (ev.clientX - rect.left) / rect.width * state.songLengthMs / 1000
+      : drag.sec + (surface === waveWrap ? (ev.clientX - drag.x) / rect.width * state.songLengthMs / 1000
+        : -(ev.clientY - drag.y) / rect.height * (ev.shiftKey ? (11480 / (Number(notePreviewSpeed.value) || 28)) / 1000 : 10));
+    setPosition(sec);
+  };
+  surface.addEventListener("pointerdown", ev => {
+    if (timeline.disabled || previewLoadingKey || (ev.button !== 1 && !(surface === waveWrap && ev.button === 0))) return;
+    ev.preventDefault(); beginPreviewSeek();
+    drag = { id: ev.pointerId, button: ev.button, x: ev.clientX, y: ev.clientY, sec: Number(timeline.value) };
+    surface.setPointerCapture(ev.pointerId); positionFor(ev);
+  });
+  surface.addEventListener("pointermove", ev => { if (drag?.id === ev.pointerId) positionFor(ev); });
+  surface.addEventListener("pointerup", ev => {
+    if (drag?.id !== ev.pointerId) return; positionFor(ev); drag = null;
+    surface.releasePointerCapture(ev.pointerId); finishPreviewSeek();
+  });
+  surface.addEventListener("pointercancel", () => { drag = null; finishPreviewSeek(); });
+  surface.addEventListener("lostpointercapture", () => { if (drag) { drag = null; finishPreviewSeek(); } });
+  surface.addEventListener("auxclick", ev => { if (ev.button === 1) ev.preventDefault(); });
+  surface.addEventListener("wheel", ev => {
+    if (!ev.altKey || timeline.disabled || previewLoadingKey || ev.deltaY === 0) return;
+    ev.preventDefault(); beginPreviewSeek();
+    const step = ev.shiftKey ? viewScrollStep(Number(timeline.value) * 1000, Math.sign(ev.deltaY)) : 1;
+    setPosition(Number(timeline.value) + Math.sign(ev.deltaY) * step);
+    seekResumeTimer = window.setTimeout(finishPreviewSeek, 150);
+  }, { passive: false });
+}

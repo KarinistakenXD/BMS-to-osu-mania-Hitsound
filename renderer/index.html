@@ -65,7 +65,12 @@
   }
   .card-head small{font-weight:500;color:var(--muted);font-size:11px}
   .card-body{padding:15px}
-  .picker{display:grid;grid-template-columns:148px minmax(0,1fr);gap:9px;align-items:center;margin-bottom:9px}
+  .picker{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:9px;align-items:center;margin-bottom:9px}
+  .difficulty-picker{flex:1 1 210px;min-width:0}.difficulty-picker select{width:100%;min-width:0;max-width:100%}
+  .picker>div:first-child{display:flex;align-items:center;gap:8px;white-space:nowrap}
+  #btn-play,#btn-pause{width:40px;height:36px;padding:0;background:transparent;box-shadow:none;transform:none;font-size:21px}
+  #btn-play:hover,#btn-pause:hover{transform:none;box-shadow:0 0 10px #ff66ab55}
+  #btn-play.transport-active,#btn-pause.transport-active{opacity:1;color:#ff99c7;border-color:#ff66ab;box-shadow:0 0 13px #ff66ab88}
   .path{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#d0c5cb;background:var(--input);padding:9px 11px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line-soft)}
   button{
     appearance:none;border:0;background:#41373e;color:#fff;border-radius:7px;padding:9px 12px;font-weight:700;cursor:pointer;
@@ -81,6 +86,7 @@
   input[type=number]:focus,select:focus{outline:2px solid #eb479155;box-shadow:inset 0 0 0 1px var(--pink2)}
   input[type=number]{width:78px}select{min-width:130px}.wide-select{width:100%;min-width:0}
   input[type=checkbox]{accent-color:var(--pink2)}
+  .clear-chart{padding:0;width:24px;height:24px;border-radius:50%;background:#3d1721;color:#ff6e80;font-size:20px;line-height:24px;box-shadow:0 0 8px #ff345044}.clear-chart:hover{background:#67202d;box-shadow:0 0 12px #ff345088}.wave-wrap,#note-preview{touch-action:none}
   .wave-wrap{position:relative;margin-top:13px;height:172px;background:#161216;border-radius:8px;overflow:hidden;cursor:pointer;box-shadow:inset 0 0 0 1px #382d34}
   .wave-wrap:before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent 24.7%,#ffffff09 25%,transparent 25.3%,transparent 49.7%,#ffffff09 50%,transparent 50.3%,transparent 74.7%,#ffffff09 75%,transparent 75.3%);pointer-events:none}
   #waveform{width:100%;height:100%;display:block}.playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--pink0);box-shadow:0 0 10px #ff66aaaa;pointer-events:none;left:0}.wave-label{position:absolute;left:10px;top:8px;color:#c1b6bd;font-size:10px;letter-spacing:.08em;pointer-events:none;text-transform:uppercase}
@@ -90,6 +96,7 @@
   .section{padding:13px 0;border-bottom:1px solid var(--line-soft)}.section:first-child{padding-top:0}.section:last-child{padding-bottom:0;border-bottom:0}.section-title{font-weight:720;margin-bottom:7px}.section-sub{color:var(--muted);font-size:11px;margin-top:-3px;margin-bottom:9px}.checks{display:grid;gap:10px}.check{display:flex;align-items:flex-start;gap:9px;color:#eee5ea}.check input{margin-top:3px}.hint{font-size:11px;color:var(--muted);margin-top:2px}
   .slider-row{display:grid;grid-template-columns:1fr 52px;gap:9px;align-items:center;margin-top:9px}.slider-copy{display:flex;justify-content:space-between;gap:10px;align-items:center}.slider-copy span:first-child{color:#f0e7ec}.slider-copy small{color:var(--muted)}output{font-variant-numeric:tabular-nums;text-align:right;color:#f4dce8;font-weight:700}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:9px}.status{margin-top:12px;padding:11px 12px;background:#1a1518;border-left:3px solid var(--pink2);border-radius:5px;color:#c9bec5;font-size:11px}.tool-status{margin-top:9px;padding:9px 10px;border-radius:6px;font-size:11px;background:#1a1518}.tool-status.neutral{color:#c5bbc1}.tool-status.good{color:#d7ffb1;border-left:3px solid #b3ff66}.tool-status.warn{color:#ffe291;border-left:3px solid #ffcc22}
+  .preview-loading{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:#141013e8;color:#eadce4;text-align:center;padding:20px}.preview-loading[hidden]{display:none}.preview-loading-spinner{width:24px;height:24px;border:3px solid #493a43;border-top-color:var(--pink1);border-radius:50%;animation:previewSpin .9s linear infinite}@keyframes previewSpin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.preview-loading-spinner{animation:none}}
   .note-preview-wrap{position:relative;height:360px;background:#141013;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px #382d34}
   #note-preview{width:100%;height:100%;display:block}.note-overlay{position:absolute;inset:0;pointer-events:none}.note-preview-label{position:absolute;left:10px;top:8px;color:#c1b6bd;font-size:10px;letter-spacing:.08em;text-transform:uppercase}.note-preview-info{position:absolute;right:10px;top:8px;color:#dacbd3;font-size:10px;font-variant-numeric:tabular-nums;text-align:right}
   .note-legend{display:flex;gap:13px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:10px}.legend-item{display:inline-flex;gap:6px;align-items:center}.legend-swatch{width:9px;height:9px;border-radius:50%}.legend-converted{background:var(--pink1)}.legend-target{background:var(--purple)}.legend-bgm{border:1px solid var(--yellow);background:#5a4212}
@@ -132,23 +139,25 @@
       <main class="card">
         <div class="card-head"><span>Source & target</span><small>target .osu audio stays authoritative</small></div>
         <div class="card-body">
-          <div class="picker"><button id="btn-pick-bms">Select BMS chart</button><div class="path" id="path-bms">No BMS selected</div></div>
-          <div class="picker"><button id="btn-pick-osu">Select target .osu</button><div class="path" id="path-osu">No osu! map selected</div></div>
+          <div class="picker"><div><button id="btn-pick-bms">Select BMS folder</button> <button class="clear-chart" id="btn-clear-bms" title="Remove BMS selection" aria-label="Remove BMS selection">×</button></div><div class="path" id="path-bms">No BMS selected</div></div>
+          <div class="picker"><div><button id="btn-pick-osu">Select osu! folder</button> <button class="clear-chart" id="btn-clear-osu" title="Remove osu selection" aria-label="Remove osu selection">×</button></div><div class="path" id="path-osu">No osu! map selected</div></div>
           <div class="controls">
-            <button class="primary" id="btn-load" disabled>Analyze & synchronize</button>
+            <button class="primary" id="btn-load" disabled>Note preview</button>
+            <label class="field difficulty-picker">BMS difficulty <select id="difficulty-bms" disabled><option>No BMS folder selected</option></select></label>
+            <label class="field difficulty-picker">osu!mania difficulty <select id="difficulty-osu" disabled><option>No osu! folder selected</option></select></label>
             <div class="spacer"></div>
             <label class="field">Keys <input id="keys" type="number" value="18" min="1" max="18"></label>
           </div>
 
           <div class="wave-wrap" id="wave-wrap">
             <canvas id="waveform"></canvas>
-            <div class="wave-label">target osu audio reference</div>
+            <div class="wave-label" id="wave-reference-label">target osu audio reference</div>
             <div class="playhead" id="playhead"></div>
           </div>
           <div class="timeline"><span id="time-current">0:00</span><input id="timeline" type="range" min="0" max="100" value="0" step="0.01" disabled><span id="time-total">0:00</span></div>
 
           <div class="transport">
-            <button id="btn-play" disabled>▶ Preview</button><button id="btn-pause" disabled>Ⅱ Pause</button>
+            <button id="btn-play" title="Play preview" aria-label="Play preview" disabled>▶</button><button id="btn-pause" title="Pause preview" aria-label="Pause preview" disabled>Ⅱ</button>
             <span class="divider"></span>
             <label class="field">Preview <select id="preview-mode">
               <option value="target-plus-keys" selected>osu audio + converted hitsounds</option>
@@ -167,12 +176,14 @@
         <div class="card-head">
           <span>Note preview</span>
           <div class="controls">
+            <label class="field">Beat division <select id="view-division" title="Visual grid and scroll steps; does not change note timing"><option value="1">1/1</option><option value="2">1/2</option><option value="3">1/3</option><option value="4" selected>1/4</option><option value="6">1/6</option><option value="8">1/8</option><option value="12">1/12</option><option value="16">1/16</option></select></label>
             <label class="field">Scroll speed <input id="note-preview-speed" type="range" min="1" max="40" step="1" value="28"><output id="note-preview-speed-out">28</output></label>
           </div>
         </div>
         <div class="card-body">
           <div class="note-preview-wrap">
             <canvas id="note-preview"></canvas>
+            <div id="preview-loading" class="preview-loading" role="status" aria-live="polite" hidden><span id="preview-loading-spinner" class="preview-loading-spinner" aria-hidden="true"></span><b id="preview-loading-title">Preparing preview</b><span id="preview-loading-message">Preparing audio and note timing…</span></div>
             <div class="note-overlay">
               <div class="note-preview-label">mania timeline · notes fall toward judgment</div>
               <div class="note-preview-info" id="note-preview-info">Analyze maps to preview notes</div>
@@ -198,12 +209,13 @@
               </div>
             </div>
             <div class="mini-panel">
-              <b>Key monitor</b>
-              <div id="key-visualizer" class="key-visualizer" aria-label="Converted key activity"></div>
-              <div class="hint">Follows the automatic output keymode. Keys flash at the NOW line.</div>
+              <b>Key monitor <span id="key-kps" style="float:right;color:var(--pink0);font-variant-numeric:tabular-nums">0 KPS</span></b>
+              <div id="key-visualizer" class="key-visualizer" aria-label="Preview key activity"></div>
+              <div class="hint">Follows displayed lanes. Holds stay lit until release; KPS counts note heads over one second.</div>
             </div>
           </div>
-          <div class="hint" style="margin-top:8px">Spacebar toggles play/pause. Notes disappear exactly at the judgment line.</div>
+          <label class="field">Chart scroll changes <input type="checkbox" id="view-sv"> Apply source BPM / SV (visual only)</label>
+          <div class="hint" style="margin-top:8px">Wheel scrolls the page. Hold Alt+wheel to seek 1 second; Alt+Shift+wheel steps by beat division. Middle-drag scrubs; Shift gives fine movement. Spacebar toggles play/pause.</div>
         </div>
       </section>
 
@@ -222,7 +234,7 @@
             <div class="slider-row"><input id="hitsound-volume" type="range" min="1" max="100" value="100"><output id="hitsound-volume-out">100%</output></div>
           </div>
           <div class="section">
-            <div class="slider-copy"><span>Audio volume</span><small>preview comparison only</small></div>
+            <div class="slider-copy"><span id="audio-volume-label">Audio volume</span><small id="audio-volume-hint">preview comparison only</small></div>
             <div class="slider-row"><input id="audio-volume" type="range" min="0" max="100" value="70"><output id="audio-volume-out">70%</output></div>
           </div>
           <div class="section">
@@ -251,7 +263,9 @@
             <label class="check"><input id="resnap" type="checkbox" checked><span><b>Re-snap after audio sync</b><div class="hint">Uses the analyzed .osu hitobjects first, then native BMS rhythmic phase. Switching compatible difficulties keeps this timing reference; Analyze updates it.</div></span></label>
             <label class="field">Resnap strategy <select id="resnap-mode" class="wide-select"><option value="thorough" selected>Thorough · target + native BMS phase</option><option value="fast">Fast · conservative target capture</option></select></label>
             <label class="field">Base tolerance <input id="snap-tolerance" type="number" value="14" min="0" max="50"> ms</label>
+            <div class="hint">Resnap search sensitivity, not an audio offset. Thorough mode can search farther using timing evidence. Updates note placement; does not reanalyze audio.</div>
           </div>
+          <label class="field">Manual Sync Correction <input id="manual-sync-ms" type="number" value="0" step="1"> ms</label><div class="hint">Positive shifts BMS later, negative earlier. Notes update while typing; preview audio rebuilds after a short pause. Retains automatic alignment rather than reanalyzing it. Disable re-snap to inspect the exact shift; Analyze reruns automatic alignment and resets this correction.</div>
           <div class="status" id="sync-status">Select both files, then analyze. The target .osu audio is the default synchronization and preview reference.</div>
         </div>
       </section>

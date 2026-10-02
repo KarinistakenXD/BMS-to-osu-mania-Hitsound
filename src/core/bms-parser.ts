@@ -57,6 +57,7 @@ export interface AudioResolution {
 }
 
 export interface ResolvedBms extends ParsedBms {
+  scrollChanges: (TimePoint & { multiplier: number })[];
   bpmChanges: BpmChange[];
   stops: StopEvent[];
   notes: AudioNote[];
@@ -193,6 +194,7 @@ export function parseBmsText(text: string, options: BmsParseOptions = {}): Resol
   };
   const measureLengths = new Map<number, number>();
   const raw: BmsObject[] = [];
+  const scrollTable = new Map<string, number>();
   const ignored = new Map<string, number>();
   const roll = options.randomRoll ?? 1;
   const ifStack: boolean[] = [];
@@ -203,7 +205,7 @@ export function parseBmsText(text: string, options: BmsParseOptions = {}): Resol
   const lines = text.replace(/^\uFEFF/, "").split(/\r\n|\r|\n/);
 
   for (const rawLine of lines) {
-    const line = rawLine.trim();
+    const line = rawLine.trim().replace(/^#EXT\s+(?=#)/i, "");
     if (line[0] !== "#") continue;
 
     /* ---- #RANDOM / #IF flow control ---- */
@@ -259,6 +261,17 @@ export function parseBmsText(text: string, options: BmsParseOptions = {}): Resol
     }
 
     /* ---- header commands ---- */
+    if (/^#SPEED[0-9A-Za-z]{2}\s/i.test(line)) {
+      diag.warn("scroll", "BMS SPEED/SP spacing extensions are not supported by this preview.");
+      continue;
+    }
+    m = /^#SCROLL([0-9A-Za-z]{2})\s+(\S+)/i.exec(line);
+    if (m) {
+      const value = Number(m[2]);
+      if (Number.isFinite(value) && value > 0) scrollTable.set(m[1].toUpperCase(), value);
+      else diag.warn("scroll", "Nonpositive/reverse BMS scrolling is not supported by this preview.");
+      continue;
+    }
     m = WAV_RE.exec(line);
     if (m) {
       header.wav.set(m[1].toUpperCase(), m[2].trim().replace(/\\/g, "/"));
@@ -312,12 +325,20 @@ export function parseBmsText(text: string, options: BmsParseOptions = {}): Resol
 
   /* ---- resolve timing channels ---- */
   const bpmChanges: BpmChange[] = [];
+  const scrollChanges: (TimePoint & { multiplier: number })[] = [];
   const stops: StopEvent[] = [];
   const notes: AudioNote[] = [];
   const tapByChannel = new Map<string, BmsObject[]>();
   const lnByChannel = new Map<string, BmsObject[]>();
 
   for (const o of raw) {
+    if (o.channel === "SC") {
+      const multiplier = scrollTable.get(o.value);
+      if (multiplier !== undefined) scrollChanges.push({ measure: o.measure, position: o.position, multiplier });
+      else diag.warn("scroll", `SC references unsupported or missing #SCROLL${o.value}`);
+      continue;
+    }
+    if (o.channel === "SP") diag.warn("scroll", "BMS SPEED/SP spacing extensions are not supported by this preview.");
     switch (classifyChannel(o.channel)) {
       case "bpm-hex": {
         // Channel 03 is HEX, never base-36.
@@ -426,6 +447,7 @@ export function parseBmsText(text: string, options: BmsParseOptions = {}): Resol
     measureLengths,
     objects: raw,
     bpmChanges,
+    scrollChanges,
     stops,
     notes: valid,
     audio: new Map(),

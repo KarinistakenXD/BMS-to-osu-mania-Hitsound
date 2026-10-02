@@ -8,8 +8,10 @@ import { spawn } from "node:child_process";
 
 import { BmsFileParser } from "../src/core/bms-parser";
 import { BmsTimingEngine } from "../src/core/bms-timing";
+import { readStandaloneChart } from "../src/core/standalone-preview";
 import { readOsuPreview } from "../src/core/osu-preview";
 import { NodeFileSource } from "../src/core/node-io";
+import { readChartFolder } from "../src/core/chart-folder";
 
 let win: BrowserWindow | null = null;
 
@@ -74,6 +76,24 @@ async function setPref(key: string, val: string): Promise<void> {
 /* ------------------------------------------------------------------ */
 /* Dialogs                                                             */
 /* ------------------------------------------------------------------ */
+ipcMain.handle("dialog:chartFolder", async (_e, kind) => {
+  if (kind !== "bms" && kind !== "osu") throw new Error("Unsupported chart kind");
+  const pref = kind === "bms" ? "sourceDir" : "destDir";
+  const result = await dialog.showOpenDialog(win!, { title: `Select ${kind === "bms" ? "BMS" : "osu!mania"} song folder`, defaultPath: await getPref(pref), properties: ["openDirectory"] });
+  if (result.canceled || !result.filePaths[0]) return null;
+  try {
+    const folder = await readChartFolder(result.filePaths[0], kind);
+    for (const warning of folder.warnings) log("[CHART] " + warning);
+    if (folder.warnings.length || !folder.charts.length) await dialog.showMessageBox(win!, {
+      type: "warning", title: "Chart folder", message: folder.charts.length ? "Some files were rejected; supported difficulties are available." : "No supported charts found in this folder.",
+      detail: folder.warnings.slice(0, 12).join("\n") || "Choose the song folder containing chart files.",
+    });
+    if (!folder.charts.length) return null;
+    await setPref(pref, folder.folder); return folder;
+  } catch (error) {
+    await dialog.showMessageBox(win!, { type: "error", message: "Could not read chart folder", detail: String(error) }); return null;
+  }
+});
 ipcMain.handle("dialog:selectBms", async () => {
   const res = await dialog.showOpenDialog(win!, {
     title: "Select a BMS file",
@@ -123,6 +143,11 @@ ipcMain.handle("dialog:pairCheck", async (_e, options: {
 /* ------------------------------------------------------------------ */
 /* Parse & Sync Timing                                                 */
 /* ------------------------------------------------------------------ */
+ipcMain.handle("core:readStandaloneChart", async (_e, { filePath, kind }) => {
+  if (kind !== "bms" && kind !== "osu") throw new Error("Unsupported chart kind");
+  return readStandaloneChart(filePath, kind);
+});
+
 ipcMain.handle("core:readOsuPreview", async (_e, { osuPath, bmsPath }) => {
   try { return await readOsuPreview(osuPath, bmsPath); } catch { return null; }
 });
@@ -190,6 +215,7 @@ ipcMain.handle("core:parseMapData", async (_e, { bmsPath, osuPath }) => {
 
     return {
       notes, files, osuAudioPath, timingPoints, bmsBeatTimes,
+      scrollPoints: target.scrollPoints,
       metadata: { bms: bmsMeta, osu: osuMeta },
       osuPreview: target.osuPreview,
       reuseKey: target.reuseKey,
@@ -239,6 +265,8 @@ async function resolveFfmpeg(): Promise<string | null> {
   for (const name of names) {
     candidates.push(path.join(process.resourcesPath, name));
     candidates.push(path.join(app.getAppPath(), name));
+    // In packaged builds getAppPath() is app.asar, not the executable folder.
+    if (app.isPackaged) candidates.push(path.join(path.dirname(app.getPath("exe")), name));
     // winget creates command links here. Probe the absolute location so Retry
     // can succeed even when this already-running process has not picked up a
     // newly modified PATH yet.

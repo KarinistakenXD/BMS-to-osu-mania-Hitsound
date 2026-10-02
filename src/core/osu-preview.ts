@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { osuScrollPoints } from "./preview-scroll";
 
 export async function readOsuPreview(osuPath: string, bmsPath: string) {
   const osuText = await fs.readFile(osuPath, "utf-8");
@@ -15,6 +16,7 @@ export async function readOsuPreview(osuPath: string, bmsPath: string) {
   // This does not alter conversion; it only lets the renderer compare the
   // generated hitsound diff against the selected target difficulty.
   const mode = Number(osuText.match(/^\s*Mode\s*:\s*(\d+)\s*$/mi)?.[1] ?? 0);
+  if (mode !== 3) throw new Error("Rejected: only osu!mania maps (Mode 3) are supported.");
   const targetKeys = Math.max(1, Math.round(Number(osuText.match(/^\s*CircleSize\s*:\s*([\d.]+)\s*$/mi)?.[1] ?? 4)));
   const hitObjectSection = osuText.match(/\[HitObjects\]([\s\S]*?)(?:\n\[|$)/)?.[1] ?? "";
   const targetNotes = mode === 3
@@ -77,5 +79,5 @@ export async function readOsuPreview(osuPath: string, bmsPath: string) {
   const reuseKey = audioIdentity && bmsIdentity && osuMeta.title && osuMeta.artist && timingRows.length
     ? JSON.stringify([audioIdentity, bmsIdentity, normalize(osuMeta.title), normalize(osuMeta.artist), timingRows, mode])
     : "";
-  return { osuAudioPath, timingPoints, metadata: osuMeta, osuPreview: { mode, keys: targetKeys, notes: targetNotes }, reuseKey };
+  return { osuAudioPath, timingPoints, scrollPoints: osuScrollPoints(timingRows), metadata: osuMeta, osuPreview: { mode, keys: targetKeys, notes: targetNotes }, reuseKey };
 }
