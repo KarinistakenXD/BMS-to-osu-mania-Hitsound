@@ -14,10 +14,12 @@ app.whenReady().then(async () => {
     const fixtureHtml = path.join(testData, 'language-preview.html');
     fs.writeFileSync(fixtureHtml, html);
     await window.loadFile(fixtureHtml);
-    await window.webContents.executeJavaScript(`localStorage.removeItem("bms2osu-language"); window.bms2osu = { onLog: () => {}, checkFfmpeg: async () => ({ available: false }), ffmpegStatus: async () => ({ available: false }) }; void 0;`);
+    await window.webContents.executeJavaScript(`localStorage.removeItem("bms2osu-language"); window.bms2osu = { startupPreferences: async () => ({language:"en", songsFolder:"C:/fixture/osu!/Songs"}), onLog: () => {}, checkFfmpeg: async () => ({ available: false }), ffmpegStatus: async () => ({ available: false }) }; void 0;`);
     const source = fs.readFileSync('renderer/renderer.ts', 'utf8');
     const test = `
       window.smoke = async () => {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (!document.getElementById("osu-default-folder").textContent.includes("C:/fixture/osu!/Songs")) throw new Error("Default Songs folder not displayed");
         if (document.documentElement.lang !== "en") throw new Error("English is not the default language");
         audioCtx = new AudioContext();
         state.targetAudioBuffer = audioCtx.createBuffer(2, audioCtx.sampleRate * 8, audioCtx.sampleRate);
@@ -159,6 +161,22 @@ app.whenReady().then(async () => {
     await window.webContents.executeJavaScript(bundled);
     const result = await window.webContents.executeJavaScript('window.smoke()');
     assert(result.playMs < 500 && result.resumeMs < 500);
+    const settingsWindow = new BrowserWindow({show:false, webPreferences:{nodeIntegration:false,contextIsolation:true}});
+    const initializeSettings = async () => {
+      await settingsWindow.loadFile(fixtureHtml);
+      await settingsWindow.webContents.executeJavaScript('window.bms2osu = {onLog:()=>{}, startupPreferences:async()=>({language:"th",songsFolder:"C:/fixture/osu!/Songs"}), ffmpegStatus:async()=>({available:false})}; void 0;');
+      await settingsWindow.webContents.executeJavaScript(bundled);
+      await settingsWindow.webContents.executeJavaScript('new Promise(resolve=>setTimeout(resolve,10))');
+    };
+    await initializeSettings();
+    assert.equal(await settingsWindow.webContents.executeJavaScript('document.documentElement.lang'),'en','saved app choice wins over installer language');
+    await settingsWindow.webContents.executeJavaScript('localStorage.removeItem("bms2osu-language")');
+    await initializeSettings();
+    assert.equal(await settingsWindow.webContents.executeJavaScript('document.documentElement.lang'),'th','first launch inherits installer language');
+    assert.equal(await settingsWindow.webContents.executeJavaScript('localStorage.getItem("bms2osu-language")'),'th');
+    assert((await settingsWindow.webContents.executeJavaScript('document.getElementById("osu-default-folder").textContent')).includes('C:/fixture/osu!/Songs'));
+    settingsWindow.destroy();
+    console.log('PASS: first-launch installer language, saved app language priority, and discovered Songs folder');
     console.log('PASS: Windows Electron prepare, key changes during preparation/ready/playback, Play, resume, and cancellation', JSON.stringify(result));
     app.exit(0);
   } catch (error) { console.error(error); app.exit(1); }

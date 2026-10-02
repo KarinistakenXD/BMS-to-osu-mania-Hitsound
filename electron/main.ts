@@ -7,6 +7,8 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 
+import { setupPreferences } from "../src/core/windows-setup";
+
 import { BmsFileParser } from "../src/core/bms-parser";
 import { BmsTimingEngine } from "../src/core/bms-timing";
 import { readStandaloneChart } from "../src/core/standalone-preview";
@@ -79,12 +81,14 @@ async function setPref(key: string, val: string): Promise<void> {
 /* ------------------------------------------------------------------ */
 let uiLanguage: Language = "en";
 const tr = (text: string) => translateText(text, uiLanguage);
+ipcMain.handle("ui:startupPreferences", () => setupPreferences());
 ipcMain.handle("ui:language", (_e, language: unknown) => { if (isLanguage(language)) uiLanguage = language; });
 
 ipcMain.handle("dialog:chartFolder", async (_e, kind) => {
   if (kind !== "bms" && kind !== "osu") throw new Error("Unsupported chart kind");
   const pref = kind === "bms" ? "sourceDir" : "destDir";
-  const result = await dialog.showOpenDialog(win!, { title: tr(`Select ${kind === "bms" ? "BMS" : "osu!mania"} song folder`), defaultPath: await getPref(pref), properties: ["openDirectory"] });
+  const defaultFolder = await getPref(pref) ?? (kind === "osu" ? (await setupPreferences()).songsFolder : undefined);
+  const result = await dialog.showOpenDialog(win!, { title: tr(`Select ${kind === "bms" ? "BMS" : "osu!mania"} song folder`), defaultPath: defaultFolder, properties: ["openDirectory"] });
   if (result.canceled || !result.filePaths[0]) return null;
   try {
     const folder = await readChartFolder(result.filePaths[0], kind);
@@ -114,7 +118,7 @@ ipcMain.handle("dialog:selectBms", async () => {
 ipcMain.handle("dialog:selectOsu", async () => {
   const res = await dialog.showOpenDialog(win!, {
     title: tr("Select Target .osu File"),
-    defaultPath: await getPref("destDir"),
+    defaultPath: await getPref("destDir") ?? (await setupPreferences()).songsFolder,
     properties: ["openFile"],
     filters: [{ name: "osu! beatmap", extensions: ["osu"] }],
   });

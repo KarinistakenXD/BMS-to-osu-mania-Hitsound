@@ -17,6 +17,14 @@ Download [the Windows x64 v1.0.4 installer](https://github.com/KarinistakenXD/BM
 
 See [the release notes](release-notes/v1.0.4.md) for the complete short list.
 
+## First-time installation
+
+The installer installs for the current user automatically, with no user-scope selection page. Choose English, Thai or Simplified Chinese, then review the setup page. It checks executable FFmpeg availability and the default osu! Songs folder. Existing FFmpeg disables downloading; when missing, an optional unchecked box installs it through winget. Internet access and winget are required for that option. You can continue without FFmpeg and install it later.
+
+The Songs field accepts an existing folder, including a custom location, or can be left blank. The installer choice becomes the app's initial default. On startup the app rechecks FFmpeg and discovers osu! from Windows registrations, its BeatmapDirectory configuration and the usual LocalAppData osu! folder. Previously selected app folders and language choices take priority. Nothing is exported until a target chart is selected and conversion is requested.
+
+The per-user installer backports the [upstream Windows installer fix](https://github.com/electron-userland/electron-builder/pull/9564) to avoid the obsolete Windows 7 System::Store helper on supported Windows versions. Repeated install/uninstall checks run in a disposable Windows CI runner.
+
 ## Convert a map
 
 1. Select the BMS song folder and an osu!mania song folder. Charts directly inside each folder appear beside **Analyze & synchronize**.
@@ -113,7 +121,7 @@ npm start
 
 Build the x64 NSIS installer with **npm run dist:win**; output goes into release/. Native Electron preview validation runs with **npx electron tests/preview-electron.cjs**.
 
-The Windows workflow checks the test suites, renderer types and native Electron audio/preview behavior before building. It uploads a build artifact; tags publish releases. Successful main builds update the current package-version release and its installer, including v1.0.4 polish updates.
+The Windows workflow checks the test suites, renderer types and native Electron audio/preview behavior before building. It then checks repeated current-user installation/uninstallation before publishing. It uploads a build artifact; tags publish releases. Successful main builds update the current package-version release and its installer, including v1.0.4 polish updates.
 
 Source layout: electron/ contains dialogs, FFmpeg and file operations; renderer/ contains the interface, preview, synchronization and language switching; src/core/ contains parsers, timing, folder discovery, export and the shared language catalog. Tests live in tests/.
 

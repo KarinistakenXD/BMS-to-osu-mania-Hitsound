@@ -8,7 +8,7 @@ export const localize = (text: string) => translateText(text, language);
 // Keep canonical text per node so switching back to English is lossless. Dynamic
 // application updates become new canonical text; chart names and diagnostics are exempt.
 function excluded(element: Element | null): boolean {
-  return !!element?.closest("#log, #path-bms, #path-osu, .language-switch, script, style");
+  return !!element?.closest("#log, #path-bms, #path-osu, .language-switch, [data-keep-text], script, style");
 }
 function translateNode(node: Node): void {
   if (node.nodeType === Node.TEXT_NODE) {
@@ -39,7 +39,8 @@ function translateNode(node: Node): void {
 }
 
 export function initializeLanguageUi(redraw: () => void): void {
-  try { const saved = localStorage.getItem("bms2osu-language"); if (isLanguage(saved)) language = saved; } catch {}
+  let hasSaved = false, touched = false;
+  try { const saved = localStorage.getItem("bms2osu-language"); if (isLanguage(saved)) { language = saved; hasSaved = true; } } catch {}
   const observer = new MutationObserver(records => {
     for (const record of records) {
       if (record.type === "childList") for (const node of Array.from(record.addedNodes)) translateNode(node);
@@ -58,7 +59,17 @@ export function initializeLanguageUi(redraw: () => void): void {
     observe();
   };
   document.querySelectorAll<HTMLButtonElement>("[data-language]").forEach(button => button.addEventListener("click", () => {
-    if (isLanguage(button.dataset.language)) { language = button.dataset.language; apply(); }
+    if (isLanguage(button.dataset.language)) { language = button.dataset.language; touched = true; apply(); }
   }));
   apply();
+  window.bms2osu.startupPreferences?.().then(preferences => {
+    if (!hasSaved && !touched && isLanguage(preferences.language)) { language = preferences.language; apply(); }
+    const destination = document.getElementById("osu-default-folder");
+    if (destination) {
+      destination.replaceChildren(document.createTextNode("Default osu! Songs folder: "), document.createElement("span"));
+      const path = destination.querySelector("span")!;
+      if (preferences.songsFolder) path.dataset.keepText = "true";
+      path.textContent = preferences.songsFolder || "Not found — choose a folder manually.";
+    }
+  }).catch(() => { const destination = document.getElementById("osu-default-folder"); if (destination) destination.textContent = "Not found — choose a folder manually."; });
 }
