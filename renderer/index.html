@@ -238,6 +238,8 @@
           </div>
           <div class="section">
             <label class="check"><input id="metronome-enabled" type="checkbox" checked><span><b>Metronome</b><div class="hint">Slow preview uses tempo-only processing for the song and the complete BMS hitsound bus so they stay aligned.</div></span></label>
+            <div class="slider-copy" style="margin-top:9px"><span>Metronome volume</span><small>independent of map audio</small></div>
+            <div class="slider-row"><input id="metronome-volume" aria-label="Metronome volume" type="range" min="0" max="100" value="60"><output id="metronome-volume-out">60%</output></div>
             <label class="field" style="margin-top:9px">Timing source <select id="metronome-source" class="wide-select">
               <option value="osu" selected>Target osu red timing points</option>
               <option value="bms">BMS native BPM / STOP timing</option>

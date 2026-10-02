@@ -101,6 +101,15 @@ app.whenReady().then(async () => {
         metronomeEnabled.checked = true; metronomeSource.value = 'osu';
         await startPreview(0);
         const denseSource = targetSource;
+        audioVolume.value = '0'; refreshVolumeLabels();
+        metronomeVolume.value = '100'; refreshMetronomeVolume();
+        if (!activeMetronomeGain || activeMetronomeGain.gain.value !== 1 || activeTargetGain.gain.value !== 0) throw new Error('Metronome volume follows music volume');
+        state.standaloneKind = 'osu'; refreshVolumeLabels();
+        if (activeMasterGain.gain.value !== 0 || activeMetronomeGain.gain.value !== 1) throw new Error('Single-chart Master volume changes metronome');
+        state.standaloneKind = null; refreshVolumeLabels();
+        metronomeVolume.value = '0'; refreshMetronomeVolume();
+        if (activeMetronomeGain.gain.value !== 0) throw new Error('Metronome cannot be muted live');
+        metronomeVolume.value = '60'; refreshMetronomeVolume();
         if (!previewPlaying || previewTicksQueue.length > Math.ceil((state.songLengthMs + 1) / 50) || !metronomeSources.length) throw new Error('Dense timing stalled audio setup: ' + previewTicksQueue.length + ' ticks, ' + metronomeSources.length + ' sources');
         await new Promise(resolve => setTimeout(resolve, 200));
         // This fixture uses a hidden window, where Chromium may suppress RAF.

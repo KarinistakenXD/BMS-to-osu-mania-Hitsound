@@ -86,6 +86,7 @@ const notePreviewInfo = $<HTMLDivElement>("note-preview-info");
 const keysInput = $<HTMLInputElement>("keys");
 const previewMode = $<HTMLSelectElement>("preview-mode");
 const metronomeEnabled = $<HTMLInputElement>("metronome-enabled");
+const metronomeVolume = $<HTMLInputElement>("metronome-volume");
 const metronomeSource = $<HTMLSelectElement>("metronome-source");
 const metronomeModel = $<HTMLDivElement>("metronome-model");
 const metronomeStick = $<HTMLDivElement>("metronome-stick");
@@ -1134,6 +1135,13 @@ function currentHitsoundGain(): number {
 function currentAudioGain(): number {
   return clamp(Number(audioVolume.value) || 0, 0, 100) / 100;
 }
+function currentMetronomeGain(): number {
+  return clamp(Number(metronomeVolume.value) || 0, 0, 100) / 100;
+}
+function refreshMetronomeVolume(): void {
+  $<HTMLOutputElement>("metronome-volume-out").value = `${Math.round(Number(metronomeVolume.value))}%`;
+  if (activeMetronomeGain) activeMetronomeGain.gain.value = currentMetronomeGain();
+}
 
 function refreshVolumeLabels(): void {
   hitsoundVolumeOut.value = `${Math.round(Number(hitsoundVolume.value))}%`;
@@ -1260,7 +1268,7 @@ function pulseVisualMetronome(tickInfo: MetronomeTick, rate: number): void {
   void metronomeModel.offsetWidth;
   metronomeModel.classList.add("metronome-pulse");
   if (tickInfo.accent) metronomeModel.classList.add("metronome-accent");
-  metronomeBeatLabel.textContent = tickInfo.accent ? `downbeat · ${tickInfo.beat + 1}/${tickInfo.meter}` : `beat ${tickInfo.beat + 1}/${tickInfo.meter}`;
+  metronomeBeatLabel.textContent = `beat ${tickInfo.beat + 1}/${tickInfo.meter}`;
   renderMeterBar(tickInfo.meter, tickInfo.beat);
   updateMetronomeReadout(tickInfo.timeMs);
 
@@ -1299,6 +1307,7 @@ resnapMode.onchange = () => { invalidatePreviewAudio(); drawNotePreview(); previ
 previewMode.onchange = previewSettingsChanged;
 metronomeEnabled.onchange = () => { refreshMetronomeUi(); if (previewPlaying) void startPreview(Number(timeline.value)); };
 metronomeSource.onchange = () => { if (previewPlaying) void startPreview(Number(timeline.value)); };
+metronomeVolume.oninput = refreshMetronomeVolume;
 playbackRate.onchange = previewSettingsChanged;
 hitsoundVolume.oninput = refreshVolumeLabels;
 audioVolume.oninput = refreshVolumeLabels;
@@ -1548,6 +1557,7 @@ let metronomeSources: AudioBufferSourceNode[] = [];
 let activeMasterGain: GainNode | null = null;
 let activeTargetGain: GainNode | null = null;
 let activeSampleGain: GainNode | null = null;
+let activeMetronomeGain: GainNode | null = null;
 let previewTimer = 0;
 let previewAudioTimer = 0;
 let previewStartedAt = 0;
@@ -1870,6 +1880,8 @@ function stopPreview(): void {
   activeMasterGain = null;
   activeTargetGain = null;
   activeSampleGain = null;
+  if (activeMetronomeGain) activeMetronomeGain.disconnect();
+  activeMetronomeGain = null;
   cancelAnimationFrame(previewTimer);
   window.clearInterval(previewAudioTimer);
   previewAudioTimer = 0;
@@ -1978,9 +1990,9 @@ function scheduleMetronomeTick(tick: MetronomeTick, rate: number): void {
   source.buffer = buffer;
   // Timing is slowed by scheduling, but the click itself keeps its original pitch.
   source.playbackRate.value = 1;
-  gain.gain.value = tick.accent ? .42 : .28;
+  gain.gain.value = .45;
   source.connect(gain);
-  gain.connect(activeMasterGain ?? audioCtx.destination);
+  gain.connect(activeMetronomeGain ?? audioCtx.destination);
   source.start(Math.max(when, audioCtx.currentTime + .002));
   source.onended = () => {
     try { source.disconnect(); } catch {}
@@ -2140,6 +2152,9 @@ async function startPreview(startSec: number): Promise<void> {
   activeSampleGain = audioCtx.createGain();
   activeSampleGain.gain.value = currentHitsoundGain();
   activeSampleGain.connect(activeMasterGain);
+  activeMetronomeGain = audioCtx.createGain();
+  activeMetronomeGain.gain.value = currentMetronomeGain();
+  activeMetronomeGain.connect(audioCtx.destination);
 
   const stretchedOffset = Math.max(0, startSec / rate);
   if (pairedPreview && pairedPreview.numberOfChannels >= 4 && stretchedOffset < pairedPreview.duration) {
