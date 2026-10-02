@@ -1238,6 +1238,11 @@ brandOrb.onclick = () => {
 function updateMetronomeReadout(timeMs: number): void {
   const bpm = metronomeBpmAt(timeMs);
   metronomeBpm.textContent = bpm && Number.isFinite(bpm) ? `${bpm.toFixed(bpm >= 100 ? 1 : 2)} BPM` : "— BPM";
+  const effectiveBpm = bpm && Number.isFinite(bpm) ? bpm * currentRate() : 120;
+  // A mechanical metronome's sliding weight rises for slower tempos.
+  const weightPosition = 5 + 54 * clamp(Math.log(Math.max(1, effectiveBpm) / 40) / Math.log(6), 0, 1);
+  const weight = metronomeStick.querySelector<HTMLElement>(".metronome-weight");
+  if (weight) weight.style.top = `${weightPosition.toFixed(1)}px`;
   updateBrandPulse(timeMs);
 }
 

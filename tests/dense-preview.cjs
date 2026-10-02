@@ -31,3 +31,8 @@ assert.deepEqual(Array.from({length:7},(_,i)=>run(`previewNoteColor(7,${i},"targ
 state.standaloneKind='bms';assert.equal(run('previewNoteColor(8,0,"target")'),'#ff855e');assert.equal(run('previewNoteColor(9,0,"target")'),'#fff0cf');
 assert.equal(run('previewNoteColor(7,3,"converted")'),'#ff66ab');
 console.log('PASS: extreme BPM, dense timing, finite grid work, bounded metronome density, unchanged normal beat phase, original column palettes');
+const weight={style:{}},readout=vm.createContext({metronomeBpm:{},metronomeStick:{querySelector:()=>weight},metronomeBpmAt:()=>readout.bpm,currentRate:()=>readout.rate,updateBrandPulse(){},Math,Number,clamp:(x,a,b)=>Math.min(b,Math.max(a,x)),bpm:60,rate:1});
+vm.runInContext(ts.transpile(source.slice(source.indexOf('function updateMetronomeReadout'),source.indexOf('function resetVisualMetronome')),{target:ts.ScriptTarget.ES2022}),readout);
+const position=()=>{vm.runInContext('updateMetronomeReadout(0)',readout);return parseFloat(weight.style.top);};
+const slow=position();readout.bpm=180;assert(position()>slow,'faster tempo lowers the metal weight');readout.bpm=120;const normal=position();readout.rate=.5;assert(position()<normal,'slow playback raises the weight');readout.bpm=1e15;assert(position()<=59,'extreme tempo stays on stick');
+console.log('PASS: mechanical metronome weight follows tempo, playback speed and physical visual bounds');
