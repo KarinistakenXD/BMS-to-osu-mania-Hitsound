@@ -19,6 +19,7 @@ export async function readOsuPreview(osuPath: string, bmsPath: string) {
   if (mode !== 3) throw new Error("Rejected: only osu!mania maps (Mode 3) are supported.");
   const targetKeys = Math.max(1, Math.round(Number(osuText.match(/^\s*CircleSize\s*:\s*([\d.]+)\s*$/mi)?.[1] ?? 4)));
   const hitObjectSection = osuText.match(/\[HitObjects\]([\s\S]*?)(?:\n\[|$)/)?.[1] ?? "";
+  const chartFolder = path.dirname(osuPath);
   const targetNotes = mode === 3
     ? hitObjectSection
         .split(/\r?\n/)
@@ -40,9 +41,20 @@ export async function readOsuPreview(osuPath: string, bmsPath: string) {
             const holdEnd = Number(parts[5].split(":")[0]);
             if (Number.isFinite(holdEnd) && holdEnd >= timeMs) endTimeMs = holdEnd;
           }
-          return { timeMs, endTimeMs, lane };
+          const sampleName = parts.slice(5).join(",").match(isHold
+            ? /^(?:[^:]*:){5}(.*)$/ : /^(?:[^:]*:){4}(.*)$/)?.[1].trim();
+          let samplePath: string | undefined;
+          if (sampleName && !/[:\x00]/.test(sampleName) && /\.(?:wav|ogg|mp3)$/i.test(sampleName)) {
+            const name = sampleName.replace(/\\/g, "/");
+            const resolved = path.resolve(chartFolder, name);
+            const relative = path.relative(chartFolder, resolved);
+            if (!path.isAbsolute(name) && !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep)) {
+              samplePath = resolved;
+            }
+          }
+          return { timeMs, endTimeMs, lane, sampleName, samplePath };
         })
-        .filter((n): n is { timeMs: number; endTimeMs: number; lane: number } => n !== null)
+        .filter((n): n is NonNullable<typeof n> => n !== null)
         .sort((a, b) => a.timeMs - b.timeMs)
     : [];
 

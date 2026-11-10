@@ -4,6 +4,14 @@ export function isLanguage(value: unknown): value is Language { return value ===
 // English is the canonical interface text. File names, chart metadata and raw diagnostics stay intact.
 export const translations: Record<string, readonly [string, string]> = {
   "Aligns BMS keysounds to an existing osu!mania beatmap, verifies timing, previews the result, and exports every audible BMS layer as playable hitsounds.": ["จัดเสียงคีย์ BMS ให้ตรงกับบีตแมป osu!mania ตรวจสอบจังหวะ ฟังตัวอย่าง และส่งออกเสียง BMS ทุกเลเยอร์เป็นฮิตซาวด์ที่เล่นได้", "将 BMS 键音与现有 osu!mania 谱面对齐，检查时序、预览结果，并将所有可听见的 BMS 音层导出为可演奏的打击音效。"],
+  "Trim quiet keysound lead-ins": ["ตัดช่วงเสียงเบาก่อนเสียงคีย์เริ่ม", "裁剪键音开头的微弱声段"],
+  "Applies to converted preview and export. Export uses FFmpeg. In original-format mode, edited samples are saved as WAV.": ["ใช้กับตัวอย่างหลังแปลงและการส่งออก การส่งออกใช้ FFmpeg ในโหมดเก็บรูปแบบเดิม ไฟล์ที่ตัดจะบันทึกเป็น WAV", "适用于转换预览和导出。导出使用 FFmpeg。保留原格式时，裁剪后的采样保存为 WAV。"],
+  "Note sample": ["ตัวอย่างเสียงของโน้ต", "音符采样"],
+  "Click a note to inspect and hear it. With the preview focused, use the arrow keys to select and Enter to play.": ["คลิกโน้ตเพื่อดูและฟังเสียง เมื่อโฟกัสอยู่ที่ตัวอย่าง ใช้ปุ่มลูกศรเพื่อเลือกและ Enter เพื่อเล่น", "点击音符可查看并试听。聚焦预览时，使用方向键选择，按 Enter 播放。"],
+  "Play sample": ["เล่นตัวอย่างเสียง", "播放采样"],
+  "No custom sample on this note.": ["โน้ตนี้ไม่มีตัวอย่างเสียงแบบกำหนดเอง", "此音符没有自定义采样。"],
+  "Sample file unavailable.": ["ไม่พบไฟล์ตัวอย่างเสียง", "采样文件不可用。"],
+  "Loading sample…": ["กำลังโหลดตัวอย่างเสียง…", "正在加载采样…"],
   "Source & target": ["ต้นฉบับและเป้าหมาย", "源谱面与目标谱面"],
   "target .osu audio stays authoritative": ["ใช้เสียง .osu เป้าหมายเป็นหลัก", "以目标 .osu 音频为基准"],
   "Select BMS folder": ["เลือกโฟลเดอร์ BMS", "选择 BMS 文件夹"],

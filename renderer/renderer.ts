@@ -2,7 +2,9 @@
 
 import { initializeLanguageUi, localize } from "./language-ui";
 
-import { analyseBuffer, mapBmsTime, synchronizeBmsToOsu, type SampleAnalysis, type SyncResult } from "./audio-sync";
+import { instrumentKey, UNNAMED_GROUP } from "../src/core/bms-osu-core";
+import { fingerprintSample, inferSampleFamilies, type SampleFingerprint } from "./sample-family";
+import { analyseBuffer, leadingTrimMs, mapBmsTime, synchronizeBmsToOsu, type SampleAnalysis, type SyncResult } from "./audio-sync";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const logEl = $<HTMLDivElement>("log");
@@ -24,7 +26,14 @@ interface Note {
   measureLength?: number;
 }
 interface TimingPoint { timeMs: number; beatLength: number; meter: number; }
-interface TargetPreviewNote { timeMs: number; endTimeMs: number; lane: number; }
+interface TargetPreviewNote { timeMs: number; endTimeMs: number; lane: number; wavId?: string; sampleName?: string; samplePath?: string; }
+interface PreviewNoteBox { x: number; y: number; width: number; height: number; }
+interface PreviewNoteHit {
+  note: TargetPreviewNote | PlacedPreviewNote;
+  source: "target" | "converted";
+  head: PreviewNoteBox;
+  body?: PreviewNoteBox;
+}
 interface PlacedPreviewNote extends TargetPreviewNote { wavId: string; wavIds: string[]; isBgm: boolean; compositeKey?: string; }
 interface MetronomeTick { timeMs: number; accent: boolean; beat: number; meter: number; }
 
@@ -43,6 +52,7 @@ const state = {
   syncedEvents: [] as Note[],
   files: {} as Record<string, string>,
   audioBuffers: new Map<string, SampleAnalysis>(),
+  sampleFamilies: new Map<string, string>(),
   targetAudioBuffer: null as AudioBuffer | null,
   sync: null as SyncResult | null,
   timingPoints: [] as TimingPoint[],
@@ -81,6 +91,14 @@ const canvas = $<HTMLCanvasElement>("waveform");
 const waveWrap = $<HTMLDivElement>("wave-wrap");
 const playhead = $<HTMLDivElement>("playhead");
 const noteCanvas = $<HTMLCanvasElement>("note-preview");
+const noteSampleNames = $("note-sample-names");
+const noteSampleLocation = $("note-sample-location");
+const noteSampleStatus = $("note-sample-status");
+const noteSamplePlay = $<HTMLButtonElement>("note-sample-play");
+let visibleNoteHits: PreviewNoteHit[] = [];
+let selectedNoteHit: PreviewNoteHit | undefined;
+let auditionSources: AudioBufferSourceNode[] = [];
+let auditionRequest = 0;
 const notePreviewMode = $<HTMLSelectElement>("note-preview-mode");
 const notePreviewSpeed = $<HTMLInputElement>("note-preview-speed");
 const notePreviewSpeedOut = $<HTMLOutputElement>("note-preview-speed-out");
@@ -104,6 +122,7 @@ const hitsoundVolumeOut = $<HTMLOutputElement>("hitsound-volume-out");
 const audioVolume = $<HTMLInputElement>("audio-volume");
 const audioVolumeOut = $<HTMLOutputElement>("audio-volume-out");
 const playbackRate = $<HTMLSelectElement>("playback-rate");
+const trimSamples = $<HTMLInputElement>("trim-samples");
 const sampleFormat = $<HTMLSelectElement>("sample-format");
 const oggQuality = $<HTMLInputElement>("ogg-quality");
 const oggQualityOut = $<HTMLOutputElement>("ogg-quality-out");
@@ -124,9 +143,11 @@ function invalidateSelectedPair(message = "Selection changed — analyze this BM
   state.nativeViewGrids = {};
   state.phaseBeatLocks = [];
   state.targetNotes = [];
+  inspectNote(undefined);
   state.targetAnchorTimes = [];
   state.targetAudioBuffer = null;
   state.audioBuffers.clear();
+  state.sampleFamilies.clear();
   state.stretchedTargetBuffers.clear();
   state.stretchedSampleBuffers.clear();
   state.convertedMixBuffer = null;
@@ -208,6 +229,7 @@ async function reuseAnalyzedTarget(osuPath: string, selectionCurrent: () => bool
   state.scrollPoints = target.scrollPoints ?? [];
   state.targetMode = target.osuPreview.mode;
   state.targetKeys = target.osuPreview.keys;
+  inspectNote(undefined);
   state.targetNotes = target.osuPreview.notes;
   // A compatible difficulty switch changes the displayed notes, not the
   // analyzed resnap anchors, audio duration or prepared transport buffers.
@@ -688,10 +710,28 @@ function outputEvents(): Note[] {
 const MAX_OUTPUT_KEYS = 18;
 const MIN_LANE_REUSE_MS = 28; // Mapset Verifier warns at <=27 ms in one lane.
 
-function laneMap(events: Note[], keys: number): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const n of events) if (!m.has(n.wavId)) m.set(n.wavId, m.size % keys);
-  return m;
+function sampleNameFamily(filename: string): string | undefined {
+  const stem = filename.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "").normalize("NFKC").trim();
+  if (/^(?:(?:sample|keysound|ks|wav|audio)[\s_.-]*)?[\s_.#()[\]-]*(?:x?\d+[\s_.#()[\]-]*)+$/i.test(stem)) {
+    return undefined;
+  }
+  const key = instrumentKey(stem + ".wav", {
+    caseInsensitive: true,
+    sequenceSuffix: /(?:[\s_.-]+\d+[a-z]|[\s_.-]*[#(\[]?\d+[)\]]?)$/i,
+  });
+  return key === UNNAMED_GROUP ? undefined : `name:${key}`;
+}
+
+function laneMap(keys: number): { homes: Map<string, number>; familyCount: number } {
+  const homes = new Map<string, number>();
+  const families = new Map<string, number>();
+  const ids = [...new Set(state.referenceEvents.map(n => n.wavId))].sort();
+  for (const id of ids) {
+    const family = state.sampleFamilies.get(id) ?? sampleNameFamily(state.files[id] ?? "") ?? `id:${id}`;
+    if (!families.has(family)) families.set(family, families.size % keys);
+    homes.set(id, families.get(family)!);
+  }
+  return { homes, familyCount: families.size };
 }
 
 /** Minimum number of mania columns needed so no two generated objects have to
@@ -711,15 +751,17 @@ function minimumKeysRequired(events: Note[]): number {
 function updateAutoKeyBounds(): void {
   if (!state.syncedEvents.length) return;
   const required = minimumKeysRequired(outputEvents());
+  const { familyCount } = laneMap(MAX_OUTPUT_KEYS);
   state.requiredKeys = required;
   const minimum = Math.min(MAX_OUTPUT_KEYS, Math.max(1, required));
   keysInput.min = String(minimum);
   keysInput.max = String(MAX_OUTPUT_KEYS);
-  keysInput.value = String(minimum);
+  const suggested = Math.min(MAX_OUTPUT_KEYS, Math.max(minimum, familyCount));
+  keysInput.value = String(suggested);
   if (required > MAX_OUTPUT_KEYS) {
-    appendLog(`[WARN] This chart needs ${required} lanes to avoid every <${MIN_LANE_REUSE_MS} ms lane reuse; output is capped at ${MAX_OUTPUT_KEYS}K and rare overflow groups will be composited.`);
+    appendLog(`[WARN] This chart needs ${required} lanes to avoid every <${MIN_LANE_REUSE_MS} ms lane reuse; output is capped at ${MAX_OUTPUT_KEYS}K. Exact-time layers beyond the available columns will be composited.`);
   } else {
-    appendLog(`Auto key count: ${minimum}K (minimum needed to avoid same-lane objects within ${MIN_LANE_REUSE_MS - 1} ms).`);
+    appendLog(`Auto key count: ${suggested}K for ${familyCount} sample families and a ${minimum}K rolling-density minimum.`);
   }
   invalidateConvertedPlacement();
 }
@@ -746,7 +788,7 @@ function buildConvertedPlacement(keys: number): { notes: PlacedPreviewNote[]; sh
   if (convertedPlacementCache?.keys === safeKeys) return convertedPlacementCache.result;
 
   const events = outputEvents().sort((a, b) => a.timeMs - b.timeMs || a.wavId.localeCompare(b.wavId));
-  const baseLane = laneMap(events, safeKeys);
+  const { homes: baseLane } = laneMap(safeKeys);
   const buckets = new Map<number, Note[]>();
   for (const n of events) {
     const t = Math.round(n.timeMs);
@@ -767,27 +809,30 @@ function buildConvertedPlacement(keys: number): { notes: PlacedPreviewNote[]; sh
     const noteIndexByLane = new Array<number>(safeKeys).fill(-1);
     simultaneous.sort((a, b) => (baseLane.get(a.wavId) ?? 0) - (baseLane.get(b.wavId) ?? 0) || a.wavId.localeCompare(b.wavId));
 
-    const laneAvailable = (lane: number) => !occupiedNow[lane] && time - lastUsed[lane] >= MIN_LANE_REUSE_MS;
-
+    // Place one note per active home before any chord member can take it.
+    const homeNotes = new Map<number, Note>();
+    const spill: Note[] = [];
     for (const note of simultaneous) {
+      const home = baseLane.get(note.wavId) ?? 0;
+      if (homeNotes.has(home)) spill.push(note);
+      else homeNotes.set(home, note);
+    }
+
+    for (const note of [...homeNotes.values(), ...spill]) {
       const base = baseLane.get(note.wavId) ?? 0;
       let lane = base;
       const baseBlockedByRecent = time - lastUsed[base] < MIN_LANE_REUSE_MS;
 
-      if (!laneAvailable(lane)) {
-        let freeLane = -1;
-        for (let d = 1; d < safeKeys && freeLane < 0; d++) {
-          if (base + d < safeKeys && laneAvailable(base + d)) freeLane = base + d;
-          else if (base - d >= 0 && laneAvailable(base - d)) freeLane = base - d;
-        }
+      if (occupiedNow[lane]) {
+        let freeLane = occupiedNow.indexOf(false, base + 1);
+        if (freeLane < 0) freeLane = occupiedNow.lastIndexOf(false, base - 1);
         if (freeLane >= 0) {
           lane = freeLane;
           shifted++;
-          if (baseBlockedByRecent) nearShifted++;
+          if (baseBlockedByRecent && time - lastUsed[lane] >= MIN_LANE_REUSE_MS) nearShifted++;
         } else {
-          // This only happens when the requested/capped key count is below the
-          // rolling concurrency requirement. Prefer compositing exact-time
-          // layers; never send them back to storyboard audio.
+          // Every column already has an object at this time. Mix the extra
+          // layer into a playable sample rather than creating a duplicate.
           let mergeLane = -1;
           let bestLayers = Number.POSITIVE_INFINITY;
           for (let candidate = 0; candidate < safeKeys; candidate++) {
@@ -805,16 +850,10 @@ function buildConvertedPlacement(keys: number): { notes: PlacedPreviewNote[]; sh
             continue;
           }
 
-          // No current-time object exists to carry a composite. This is only
-          // possible if the chart truly needs >18 rolling lanes. Pick the
-          // least-recently-used lane and report it explicitly.
-          lane = 0;
-          for (let candidate = 1; candidate < safeKeys; candidate++) if (lastUsed[candidate] < lastUsed[lane]) lane = candidate;
-          nearConflicts++;
-          shifted++;
         }
       }
 
+      if (time - lastUsed[lane] < MIN_LANE_REUSE_MS) nearConflicts++;
       occupiedNow[lane] = true;
       lastUsed[lane] = time;
       notes.push({ timeMs: time, endTimeMs: time, lane, wavId: note.wavId, wavIds: [note.wavId], isBgm: note.isBgm });
@@ -887,7 +926,8 @@ function drawPreviewNote(
   judgmentY: number,
   bottom: number,
   isBgm = false,
-): void {
+  selected = false,
+): PreviewNoteHit | undefined {
   // A hold remains visible until its tail reaches NOW; taps end at their head.
   const isHold = note.endTimeMs > note.timeMs + 1;
   const visibleEndMs = isHold ? note.endTimeMs : note.timeMs;
@@ -917,6 +957,7 @@ function drawPreviewNote(
     ctx.shadowBlur = 1.5 + 4.5 * strength;
     ctx.globalAlpha = .92 + .08 * strength;
   }
+  let body: PreviewNoteBox | undefined;
   if (isHold) {
     const bodyTop = Math.min(yHead, yEnd);
     const bodyBottom = Math.max(yHead, yEnd);
@@ -927,7 +968,8 @@ function drawPreviewNote(
       silver.addColorStop(0, "#7c838f"); silver.addColorStop(.5, "#b7bec8"); silver.addColorStop(1, "#7c838f");
       ctx.fillStyle = silver;
     }
-    ctx.fillRect(x + inset, bodyTop, w - inset * 2, Math.max(3, bodyBottom - bodyTop));
+    body = { x: x + inset, y: bodyTop, width: w - inset * 2, height: Math.max(3, bodyBottom - bodyTop) };
+    ctx.fillRect(body.x, body.y, body.width, body.height);
     ctx.globalAlpha = 1;
     if (source === "target" && previewScrollDistance(nowMs, note.endTimeMs) <= horizonMs) {
       ctx.fillStyle = "#c5cbd3";
@@ -939,9 +981,11 @@ function drawPreviewNote(
   ctx.beginPath();
   ctx.roundRect(x, yHead - noteH, w, noteH, source === "target" ? 0 : Math.min(4, noteH / 2));
   ctx.fill();
-  ctx.lineWidth = leadMs <= 90 ? 1.55 : 1;
+  if (selected) ctx.strokeStyle = "#fff";
+  ctx.lineWidth = selected ? 2 : leadMs <= 90 ? 1.55 : 1;
   ctx.stroke();
   ctx.restore();
+  return { note, source, head: { x, y: yHead - noteH, width: w, height: noteH }, body };
 }
 
 function drawPlayfieldGrid(
@@ -1049,11 +1093,18 @@ function drawNotePreview(): void {
   ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
   ctx.fillText(localize("NOW"), 7, judgmentY - 6);
 
+  visibleNoteHits = [];
   if ((mode === "target" || mode === "overlay") && state.targetMode === 3) {
-    for (const note of state.targetNotes) drawPreviewNote(ctx, note, targetKeys, "target", nowMs, horizonMs, pastMs, width, top, judgmentY, bottom);
+    for (const note of state.targetNotes) {
+      const hit = drawPreviewNote(ctx, note, targetKeys, "target", nowMs, horizonMs, pastMs, width, top, judgmentY, bottom, false, selectedNoteHit?.note === note);
+      if (hit) visibleNoteHits.push(hit);
+    }
   }
   if (mode === "converted" || mode === "overlay") {
-    for (const note of placement.notes) drawPreviewNote(ctx, note, outputKeys, "converted", nowMs, horizonMs, pastMs, width, top, judgmentY, bottom, note.isBgm);
+    for (const note of placement.notes) {
+      const hit = drawPreviewNote(ctx, note, outputKeys, "converted", nowMs, horizonMs, pastMs, width, top, judgmentY, bottom, note.isBgm, selectedNoteHit?.note === note);
+      if (hit) visibleNoteHits.push(hit);
+    }
   }
 
   updateKeyVisualizer(state.standaloneKind ? targetKeys : outputKeys, state.standaloneKind ? state.targetNotes as PlacedPreviewNote[] : placement.notes, nowMs);
@@ -1159,7 +1210,7 @@ function refreshVolumeLabels(): void {
 }
 
 async function refreshFfmpegStatus(): Promise<void> {
-  if (sampleFormat.value !== "ogg") {
+  if (sampleFormat.value !== "ogg" && !trimSamples.checked) {
     ffmpegStatus.className = "tool-status neutral";
     ffmpegStatus.textContent = "Original-format copy selected — FFmpeg is not required.";
     return;
@@ -1178,7 +1229,7 @@ async function refreshFfmpegStatus(): Promise<void> {
 
 function refreshSampleFormatUi(): void {
   const isOgg = sampleFormat.value === "ogg";
-  oggOptions.classList.toggle("disabled", !isOgg);
+  oggOptions.classList.toggle("disabled", !isOgg && !trimSamples.checked);
   oggQuality.disabled = !isOgg;
   void refreshFfmpegStatus();
 }
@@ -1348,7 +1399,12 @@ hitsoundVolume.oninput = refreshVolumeLabels;
 audioVolume.oninput = refreshVolumeLabels;
 oggQuality.oninput = refreshVolumeLabels;
 sampleFormat.onchange = refreshSampleFormatUi;
-notePreviewMode.onchange = drawNotePreview;
+trimSamples.onchange = () => {
+  refreshSampleFormatUi();
+  invalidatePreviewAudio();
+  previewSettingsChanged();
+};
+notePreviewMode.onchange = () => { inspectNote(undefined); drawNotePreview(); };
 notePreviewSpeed.oninput = () => { const speed = clamp(Number(notePreviewSpeed.value) || 28, 1, 40); notePreviewSpeedOut.value = `${Math.round(speed)} · ${Math.round(11480 / speed)}ms`; drawNotePreview(); };
 keysInput.oninput = () => {
   const min = Math.min(MAX_OUTPUT_KEYS, Math.max(1, state.requiredKeys || 1));
@@ -1376,6 +1432,7 @@ btnLoad.onclick = async () => {
   manualSync.value = "0";
   invalidatePreviewAudio();
   state.audioBuffers.clear();
+  state.sampleFamilies.clear();
   state.targetAudioBuffer = null;
   state.stretchedTargetBuffers.clear();
   state.stretchedSampleBuffers.clear();
@@ -1410,6 +1467,7 @@ btnLoad.onclick = async () => {
   state.bmsBeatTimes = data.bmsBeatTimes ?? [];
   state.targetMode = data.osuPreview?.mode ?? 0;
   state.targetKeys = data.osuPreview?.keys ?? 4;
+  inspectNote(undefined);
   state.targetNotes = data.osuPreview?.notes ?? [];
   state.metadata = data.metadata ?? { bms: { title: "", artist: "" }, osu: { title: "", artist: "", creator: "", version: "" } };
   state.targetAnchorTimes = [];
@@ -1436,6 +1494,9 @@ btnLoad.onclick = async () => {
   }
 
   appendLog(`Target audio decoded: ${formatTime(state.targetAudioBuffer.duration)}; ${state.timingPoints.length} red timing points found.`);
+  const candidates = new Map([...new Set(data.notes.map(note => note.wavId))].sort()
+    .map(id => [id, { id, nameKey: sampleNameFamily(data.files[id] ?? ""), fingerprint: undefined as SampleFingerprint | undefined }]));
+  const needsAudioFamilies = [...candidates.values()].some(candidate => !candidate.nameKey);
   let silent = 0;
   let failed = 0;
   for (const [id, filePath] of Object.entries(data.files)) {
@@ -1450,12 +1511,23 @@ btnLoad.onclick = async () => {
         for (let i = 0; i < d.length; i += stride) peak = Math.max(peak, Math.abs(d[i]));
       }
       if (peak < .001) silent++;
-      else state.audioBuffers.set(id, analyseBuffer(b));
+      else {
+        const trim = leadingTrimMs(b);
+        state.audioBuffers.set(id, { ...analyseBuffer(b), leadingTrimMs: trim });
+        const candidate = needsAudioFamilies ? candidates.get(id) : undefined;
+        if (candidate) candidate.fingerprint = fingerprintSample(b, trim);
+      }
     } catch {
       failed++;
     }
   }
 
+  if (needsAudioFamilies) {
+    state.sampleFamilies = inferSampleFamilies([...candidates.values()]);
+    const matched = [...candidates.values()].filter(candidate =>
+      !candidate.nameKey && state.sampleFamilies.get(candidate.id) !== `id:${candidate.id}`).length;
+    appendLog(`Audio grouped ${matched} numbered or unnamed samples with similar sounds.`);
+  }
   const usable = state.referenceEvents.filter(e => state.audioBuffers.has(e.wavId));
   appendLog(`Usable BMS audio events: ${usable.length}; silent samples: ${silent}${failed ? `; decode failures: ${failed}` : ""}.`);
   if (usable.length < 4) {
@@ -1709,7 +1781,7 @@ function audioBufferToWavBytes(buffer: AudioBuffer): Uint8Array {
   return bytes;
 }
 
-async function renderEventBus(events: Note[]): Promise<AudioBuffer | null> {
+async function renderEventBus(events: Note[], trim = false): Promise<AudioBuffer | null> {
   if (!audioCtx || !state.targetAudioBuffer || !events.length) return null;
   const sr = state.targetAudioBuffer.sampleRate;
   const frames = Math.max(1, Math.ceil((state.songLengthMs / 1000 + 1) * sr));
@@ -1785,7 +1857,9 @@ async function renderEventBus(events: Note[]): Promise<AudioBuffer | null> {
       for (const event of group) {
         const source = offline.createBufferSource(); source.buffer = buffer; source.connect(offline.destination);
         const relative = event.timeMs / 1000 - start / sr;
-        source.start(Math.max(0, relative), Math.max(0, -relative)); scheduled++;
+        const offset = Math.max(0, -relative) + (trim ? (state.audioBuffers.get(id)?.leadingTrimMs ?? 0) / 1000 : 0);
+        if (offset >= buffer.duration) continue;
+        source.start(Math.max(0, relative), offset); scheduled++;
       }
     }
     await flush();
@@ -1813,7 +1887,7 @@ async function previewMixBuffer(mode: PreviewMode): Promise<AudioBuffer | null> 
     return state.referenceMixBuffer;
   }
   if (!state.convertedMixBuffer) {
-    const buffer = await renderEventBus(outputEvents());
+    const buffer = await renderEventBus(outputEvents(), trimSamples.checked);
     if (generation !== preparationGeneration) return null;
     state.convertedMixBuffer = buffer;
   }
@@ -2153,6 +2227,7 @@ async function startPreview(startSec: number): Promise<void> {
   if (!audioCtx || !state.targetAudioBuffer || !state.compatibilityOk) return;
   stopPreview();
   const request = transportRequest;
+  stopNoteAudition();
   await audioCtx.resume();
   if (request !== transportRequest) return;
   const mode = previewMode.value as PreviewMode;
@@ -2239,6 +2314,130 @@ async function startPreview(startSec: number): Promise<void> {
   previewTimer = requestAnimationFrame(tick);
 }
 
+function noteSamples(hit: PreviewNoteHit) {
+  const { note } = hit;
+  const ids = "wavIds" in note ? note.wavIds : note.wavId ? [note.wavId] : [];
+  if (!ids.length) return note.sampleName ? [{ name: note.sampleName, path: note.samplePath, trimMs: 0 }] : [];
+  return ids.map(id => {
+    const path = state.files[id];
+    return {
+      name: note.sampleName ?? path?.split(/[\\/]/).pop() ?? id,
+      path,
+      trimMs: hit.source === "converted" && trimSamples.checked ? state.audioBuffers.get(id)?.leadingTrimMs ?? 0 : 0,
+    };
+  });
+}
+
+function stopNoteAudition(): void {
+  auditionRequest++;
+  for (const source of auditionSources) source.stop();
+  auditionSources = [];
+  if (!noteSamplePlay.hidden) noteSampleStatus.textContent = "";
+}
+
+function inspectNote(hit: PreviewNoteHit | undefined): void {
+  stopNoteAudition();
+  selectedNoteHit = hit;
+  const samples = hit ? noteSamples(hit) : [];
+  noteSampleNames.textContent = samples.map(sample => sample.name).join(" · ");
+  noteSampleLocation.textContent = hit ? `${Math.round(hit.note.timeMs)} ms · #${hit.note.lane + 1}` : "";
+  noteSamplePlay.hidden = !samples.some(sample => sample.path);
+  noteSampleStatus.textContent = !hit ? "" : !samples.length ? "No custom sample on this note."
+    : noteSamplePlay.hidden ? "Sample file unavailable." : "";
+}
+
+async function playNoteSample(): Promise<void> {
+  if (!selectedNoteHit || noteSamplePlay.hidden) return;
+  const samples = noteSamples(selectedNoteHit);
+  if (previewPlaying) togglePreview();
+  stopNoteAudition();
+  const request = auditionRequest;
+  noteSampleStatus.textContent = "Loading sample…";
+  try {
+    const context = audioCtx ??= new AudioContext();
+    await context.resume();
+    const decoded = await Promise.all(samples.map(async sample => {
+      if (!sample.path) return null;
+      try {
+        const bytes = await window.bms2osu.readAudioFile(sample.path);
+        if (!bytes?.length) return null;
+        const buffer = await context.decodeAudioData(bytesToArrayBuffer(bytes));
+        return sample.trimMs / 1000 < buffer.duration ? { buffer, offset: sample.trimMs / 1000 } : null;
+      } catch { return null; }
+    }));
+    if (request !== auditionRequest) return;
+    const ready = decoded.filter((sample): sample is NonNullable<typeof sample> => sample !== null);
+    noteSampleStatus.textContent = ready.length === samples.length ? "" : "Sample file unavailable.";
+    if (!ready.length) return;
+    const gain = context.createGain();
+    gain.gain.value = .8 / ready.length;
+    gain.connect(context.destination);
+    const start = context.currentTime;
+    let playing = ready.length;
+    for (const { buffer, offset } of ready) {
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(gain);
+      auditionSources.push(source);
+      source.onended = () => {
+        source.disconnect();
+        auditionSources = auditionSources.filter(active => active !== source);
+        if (--playing === 0) gain.disconnect();
+      };
+      source.start(start, offset);
+    }
+  } catch {
+    if (request === auditionRequest) noteSampleStatus.textContent = "Sample file unavailable.";
+  }
+}
+
+function noteHitAt(event: MouseEvent): PreviewNoteHit | undefined {
+  const rect = noteCanvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const contains = (box: PreviewNoteBox) => x >= box.x && x <= box.x + box.width
+    && y >= box.y && y <= box.y + box.height;
+  let bodyHit: PreviewNoteHit | undefined;
+  for (let i = visibleNoteHits.length - 1; i >= 0; i--) {
+    const hit = visibleNoteHits[i];
+    if (contains(hit.head)) return hit;
+    if (!bodyHit && hit.body && contains(hit.body)) bodyHit = hit;
+  }
+  return bodyHit;
+}
+
+noteSamplePlay.onclick = () => void playNoteSample();
+noteCanvas.onpointermove = event => { noteCanvas.style.cursor = noteHitAt(event) ? "pointer" : ""; };
+noteCanvas.onclick = event => {
+  if (event.button !== 0 || previewLoadingKey) return;
+  const hit = noteHitAt(event);
+  if (!hit) return;
+  if (previewPlaying) togglePreview();
+  inspectNote(hit);
+  drawNotePreview();
+  void playNoteSample();
+};
+noteCanvas.onkeydown = event => {
+  if (previewLoadingKey) return;
+  if (event.key === "Enter") {
+    event.preventDefault();
+    void playNoteSample();
+  } else if (event.key === "Escape" && selectedNoteHit) {
+    event.preventDefault();
+    inspectNote(undefined);
+    drawNotePreview();
+  } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key) && visibleNoteHits.length) {
+    event.preventDefault();
+    const hits = [...visibleNoteHits].sort((a, b) => a.note.timeMs - b.note.timeMs || a.note.lane - b.note.lane);
+    const previous = hits.findIndex(hit => hit.note === selectedNoteHit?.note);
+    const step = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+    const index = previous < 0 ? (step < 0 ? hits.length - 1 : 0) : clamp(previous + step, 0, hits.length - 1);
+    if (previewPlaying) togglePreview();
+    inspectNote(hits[index]);
+    drawNotePreview();
+  }
+};
+
 function togglePreview(): void {
   if (previewPlaying) {
     const sec = audioCtx ? previewStartSec + Math.max(0, audioCtx.currentTime - previewStartedAt) * currentRate() : Number(timeline.value);
@@ -2248,7 +2447,7 @@ function togglePreview(): void {
 btnPlay.onclick = togglePreview;
 
 document.addEventListener("keydown", (event) => {
-  if (event.code !== "Space" || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.defaultPrevented || event.target === noteSamplePlay || event.code !== "Space" || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
   const target = event.target as HTMLElement | null;
   const tag = target?.tagName?.toLowerCase();
   const inputType = target instanceof HTMLInputElement ? target.type : "";
@@ -2272,14 +2471,31 @@ btnConvert.onclick = async () => {
   const events = outputEvents().sort((a, b) => a.timeMs - b.timeMs);
   const placement = buildConvertedPlacement(keys);
   const usedWavIds = [...new Set(events.map(n => n.wavId))];
+  const trimEnabled = trimSamples.checked;
+  const trimFor = (id: string) => trimEnabled ? (state.audioBuffers.get(id)?.leadingTrimMs ?? 0) : 0;
   const sampleItems = usedWavIds
-    .map(wavId => ({ wavId, sourcePath: state.files[wavId] }))
+    .map(wavId => ({ wavId, sourcePath: state.files[wavId], trimMs: trimFor(wavId) }))
     .filter(item => !!item.sourcePath);
 
-  const willNeedCompositeMixing = placement.notes.some(n => n.wavIds.length > 1 && n.compositeKey);
-  if (sampleFormat.value === "ogg" || willNeedCompositeMixing) {
-    const reason = sampleFormat.value === "ogg"
+  const compositeItems = placement.notes
+    .filter(n => n.wavIds.length > 1 && n.compositeKey)
+    .map(n => {
+      const ids = n.wavIds.filter(id => state.files[id]);
+      return { key: n.compositeKey!, sourcePaths: ids.map(id => state.files[id]), trimMs: ids.map(trimFor) };
+    })
+    .filter(item => item.sourcePaths.length > 1);
+  const exportOptions = {
+    enabled: true,
+    convertToOgg: sampleFormat.value === "ogg",
+    oggQuality: Number(oggQuality.value),
+    conflict: conflictPolicy.value === "replace" ? "replace" as const : "skip" as const,
+  };
+  const willNeedCompositeMixing = compositeItems.length > 0;
+  const willTrim = sampleItems.some(item => item.trimMs > 0);
+  if (exportOptions.convertToOgg || willNeedCompositeMixing || willTrim) {
+    const reason = exportOptions.convertToOgg
       ? "OGG sample export requires FFmpeg."
+      : willTrim ? "Trimming samples for export requires FFmpeg."
       : "This chart needs composite playable keysounds, which require FFmpeg to mix several BMS samples into one hitobject sample.";
     const ffmpeg = await window.bms2osu.ensureFfmpeg(reason);
     if (!ffmpeg?.available) {
@@ -2290,12 +2506,7 @@ btnConvert.onclick = async () => {
   }
 
   appendLog(`Preparing ${sampleItems.length} unique BMS samples for the target beatmap folder…`);
-  const sampleResult = await window.bms2osu.prepareSamples(state.osuPath, sampleItems, {
-    enabled: true,
-    convertToOgg: sampleFormat.value === "ogg",
-    oggQuality: Number(oggQuality.value),
-    conflict: conflictPolicy.value === "replace" ? "replace" : "skip",
-  });
+  const sampleResult = await window.bms2osu.prepareSamples(state.osuPath, sampleItems, exportOptions);
 
   if (!sampleResult.ok) {
     appendLog(`[ERROR] Sample export failed: ${sampleResult.error ?? "unknown error"}`);
@@ -2303,22 +2514,11 @@ btnConvert.onclick = async () => {
     return;
   }
   if (sampleResult.warning) appendLog(`[WARN] ${sampleResult.warning}`);
+  if (willTrim) appendLog(`Trim detected in ${sampleItems.filter(item => item.trimMs > 0).length} samples.`);
   appendLog(`Samples ready: ${sampleResult.exported} written${sampleResult.skipped ? `, ${sampleResult.skipped} existing files kept` : ""}.`);
 
-  const compositeItems = placement.notes
-    .filter(n => n.wavIds.length > 1 && n.compositeKey)
-    .map(n => ({
-      key: n.compositeKey!,
-      sourcePaths: n.wavIds.map(id => state.files[id]).filter(Boolean),
-    }))
-    .filter(item => item.sourcePaths.length > 1);
   const uniqueCompositeItems = [...new Map(compositeItems.map(item => [item.key, item])).values()];
-  const compositeResult = await window.bms2osu.prepareCompositeSamples(state.osuPath, uniqueCompositeItems, {
-    enabled: true,
-    convertToOgg: sampleFormat.value === "ogg",
-    oggQuality: Number(oggQuality.value),
-    conflict: conflictPolicy.value === "replace" ? "replace" : "skip",
-  });
+  const compositeResult = await window.bms2osu.prepareCompositeSamples(state.osuPath, uniqueCompositeItems, exportOptions);
   if (!compositeResult.ok) {
     appendLog(`[ERROR] Composite sample export failed: ${compositeResult.error ?? "unknown error"}`);
     btnConvert.disabled = false;
@@ -2344,7 +2544,7 @@ btnConvert.onclick = async () => {
   appendLog(`Writing ${hitObjects.length} hitobjects at ${volume}% sample volume${resnap.checked ? ` with ${(resnapMode.value as ResnapMode) === "thorough" ? "thorough target/BMS-phase" : "fast target/BMS-phase"} resnap` : ""}.`);
   if (resnap.checked) appendLog(`Resnap result: ${lastSnapStats.target} target-hitobject anchors, ${lastSnapStats.phase} native-structure anchors, ${lastSnapStats.grid} target-grid fallbacks, ${lastSnapStats.unchanged} unchanged.`);
   if (shifted) appendLog(`Lane-shifted ${shifted} keysounds; ${placement.nearShifted} of them avoided same-column reuse inside ${MIN_LANE_REUSE_MS} ms.`);
-  if (placement.nearConflicts) appendLog(`[WARN] ${placement.nearConflicts} near-time lane conflicts remained because the chart needs more than ${MAX_OUTPUT_KEYS} playable columns.`);
+  if (placement.nearConflicts) appendLog(`[WARN] ${placement.nearConflicts} same-column notes are less than ${MIN_LANE_REUSE_MS} ms apart with home columns preserved.`);
   if (stacked) appendLog(`${stacked} overflow keysound layers were merged into composite playable samples instead of creating concurrent circles or storyboard sounds.`);
 
   const removeStoryboardSampleNames: string[] = [
@@ -2409,7 +2609,7 @@ function setStandaloneControls(single: boolean): void {
   hitsoundVolume.disabled = single; audioVolume.disabled = false;
   $("audio-volume-label").textContent = single ? "Master volume" : "Audio volume";
   $("audio-volume-hint").textContent = single ? "all preview audio" : "preview comparison only";
-  sampleFormat.disabled = single; oggQuality.disabled = single; conflictPolicy.disabled = single;
+  trimSamples.disabled = single; sampleFormat.disabled = single; oggQuality.disabled = single; conflictPolicy.disabled = single;
   if (single) btnConvert.disabled = true;
 }
 async function loadStandalonePreview(): Promise<void> {

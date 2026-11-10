@@ -22,7 +22,7 @@ assert.throws(()=>patchTemplate('unexpected template'),/review/);
 const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
 assert.equal(pkg.build.nsis.allowElevation,false);
 assert.equal(pkg.build.nsis.selectPerMachineByDefault,false);
-const installer = fs.readFileSync('build/installer.nsh','utf8');
+const installer = fs.readFileSync('build/installer.nsh','utf8').replace(/\r\n/g, '\n');
 assert(installer.includes('!macro customInstallMode\n  StrCpy $isForceCurrentInstall 1'));
 assert(installer.includes('StrCpy $SetupDownloadState ${BST_UNCHECKED}'));
 assert(installer.includes('${AndIf} $SetupFfmpeg == ""'), 'download only when missing');

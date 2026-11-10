@@ -31,9 +31,40 @@ interface SparsePeak {
 export interface SampleAnalysis {
   durationMs: number;
   pcmBytes: number;
+  leadingTrimMs?: number;
   energy: Float32Array;
   peaks: SparsePeak[];
   weight: number;
+}
+
+/** Scan both channels through the entire sample before classifying the lead-in. */
+export function leadingTrimMs(buffer: AudioBuffer): number {
+  const windowSize = Math.max(1, Math.round(buffer.sampleRate / 2000));
+  const windows = new Float32Array(Math.ceil(buffer.length / windowSize));
+  let peak = 0;
+  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+    const data = buffer.getChannelData(channel);
+    for (let window = 0; window < windows.length; window++) {
+      const end = Math.min(data.length, (window + 1) * windowSize);
+      let level = windows[window];
+      for (let i = window * windowSize; i < end; i++) level = Math.max(level, Math.abs(data[i]));
+      windows[window] = level;
+      peak = Math.max(peak, level);
+    }
+  }
+  if (peak < .001) return 0;
+  // shortcut: peak-relative windows cannot distinguish every quiet pickup from noise, keep trimming opt-in.
+  const quietAttack = peak * .09;
+  let activeLeadInFrames = 0;
+  for (let i = 0; i < windows.length; i++) {
+    if (windows[i] >= peak * .25 || (windows[i] >= quietAttack && windows[i + 1] >= quietAttack)) {
+      // A sustained quiet lead-in may be the intended start of a swell.
+      if (activeLeadInFrames * windowSize / buffer.sampleRate >= .012) return 0;
+      return Math.max(0, Math.round(i * windowSize / buffer.sampleRate * 1000000 - 750) / 1000);
+    }
+    if (windows[i] >= peak * .04) activeLeadInFrames++;
+  }
+  return 0;
 }
 
 const FEATURE_FRAME_MS = 2;

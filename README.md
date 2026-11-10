@@ -4,18 +4,15 @@ Align BMS keysounds with an existing osu!mania song and export every audible BMS
 
 ## Download
 
-Download [the Windows x64 v1.0.4 installer](https://github.com/KarinistakenXD/BMS-to-osu-mania-Hitsound/releases/download/v1.0.4/BMS-to-osu-mania-Hitsound-Setup-1.0.4-x64.exe). Node.js and the source-code ZIP are unnecessary for normal use. Current installers are unsigned, so Windows may show an Unknown publisher warning.
+Download [the Windows x64 v1.0.5 installer](https://github.com/KarinistakenXD/BMS-to-osu-mania-Hitsound/releases/download/v1.0.5/BMS-to-osu-mania-Hitsound-Setup-1.0.5-x64.exe). Node.js and the source-code ZIP are unnecessary for normal use. Current installers are unsigned, so Windows may show an Unknown publisher warning.
 
-## What's in v1.0.4
+## What's new in v1.0.5
 
-- Song-folder selection, compact difficulty lists, automatic hardest-difficulty selection and standalone original-chart preview. Non-mania osu! charts are rejected.
-- Thai, English and Simplified Chinese controls, guidance and common dialogs. Choose **ไทย | English | 中文** at the top right; English is the initial default and your choice is remembered. Switching language keeps playback and selection. Filenames, chart metadata and raw technical diagnostics retain their original text.
-- Manual Sync Correction after automatic alignment, energy-envelope fallback for low-transient audio, compact sample features and windowed preview rendering. Preview headroom protection accompanies the existing FFmpeg export limiter.
-- One Play/Pause button, clear-selection crosses, elapsed preparation time, held-key lights, KPS, beat subdivisions, deliberate seeking and optional BPM/SV display.
-- Original osu!mania notes use mirrored white/cyan heads and a yellow center in odd key modes. Native BMS has cream/teal/orange heads and distinct scratch colors. Original LN bodies are gray with subtle silver shading, moderately narrow at 65% of head width, with a 1px release cap. Converted hitsounds stay pink. The built-in column layout covers 1–18 lanes.
-- Dense-timing protection, normalized multi-BPM scroll simulation, independent metronome volume and continuous movement through tempo changes. Compatible-difficulty analysis/audio reuse and preview speed 1–40 are retained.
+- **Keep similar sounds in the same column.** Numbered variations of a named sound share a home column. If the filenames are just numbers or labels like `_x2.ogg`, Analyze compares the audio and groups clear matches, including pitched copies.
+- **Hear a note on its own.** Click a note in the preview to see its sample name, timestamp and column and play the sample. Use **Play sample** to hear it again.
+- **Trim quiet lead-ins when needed.** Turn on **Trim quiet keysound lead-ins** in Sample export to try it in the converted preview before exporting. The setting starts off.
 
-See [the release notes](release-notes/v1.0.4.md) for the complete short list.
+Read the [v1.0.5 release notes](release-notes/v1.0.5.md) or catch up on the [v1.0.4 changes](release-notes/v1.0.4.md).
 
 ## First-time installation
 
@@ -31,10 +28,10 @@ The per-user installer backports the [upstream Windows installer fix](https://gi
 2. Choose the source and target difficulties, then analyze. The target osu! song is the default audio reference.
 3. Review pair-verification diagnostics. Clearly incompatible pairs are blocked; uncertain pairs ask whether to continue.
 4. Listen and compare Converted BMS, Target osu! difficulty or the overlay. Adjust timing if needed.
-5. Choose sample format and existing-file behavior, then **Convert difficulty + export samples**.
+5. Choose sample format, optional lead-in trimming and existing-file behavior, then **Convert difficulty + export samples**.
 6. Open the generated difficulty in osu! and inspect it before using it in a mapset.
 
-The output is a hitsound difficulty containing all audible BMS layers, including background/invisible events. Lane allocation supports up to 18K; unavoidable simultaneous overflow becomes composite audio instead of duplicate circles or storyboard samples. Samples are written into the target beatmap folder. Names sharing one basename are disambiguated using their WAV IDs. Existing-file behavior can keep or replace files.
+The output is a hitsound difficulty containing all audible BMS layers, including background/invisible events. The converter supports up to 18 columns. Single notes and quick repeats stay in their home column. Extra notes in a chord use free columns to the right first, then to the left. If every column is taken at that timestamp, the remaining layers are mixed into a playable sample. Samples are written into the target beatmap folder. Names sharing one basename are disambiguated using their WAV IDs. Existing-file behavior can keep or replace files.
 
 The target difficulty supplies timing evidence and can have fewer keys or fewer notes than the BMS. It need not contain every BMS rhythm. The exported result should still be checked by listening and with tools such as [Mapset Verifier](https://github.com/Naxesss/MapsetVerifier).
 
@@ -52,6 +49,10 @@ Compatible osu! difficulty changes reuse analysis when artist, title, timing dat
 Select only one song folder and click **Note preview**. BMS-family files (.bms, .bme, .bml, .bmx and .pms) display native lanes, scratches, timing and holds, with their original keysounds. osu!mania displays its original notes, holds and song.
 
 Native key count and conversion settings are locked in this mode. The audio slider becomes **Master volume** for chart audio; metronome volume remains separate. This is a viewer, rather than a chart editor.
+
+## Inspect a note's sample
+
+Click a tap or hold in **Note preview** to hear its custom sample by itself. The inspector shows the filename, timestamp and column. With the preview focused, use the arrow keys to select, Enter to play and Escape to clear. For a converted note that combines layers, the inspector lists the source names and plays them together. osu!mania notes without a named sample show **No custom sample on this note**.
 
 ## Preview controls
 
@@ -95,7 +96,7 @@ Disable resnap to inspect the exact manual shift. Review diagnostics and listen 
 
 Analysis produces alignment evidence; preview preparation then renders the playable audio bus. Changes to timing, preview mode or playback rate may need new audio. The loading overlay covers note preview too, and progress separates **song seconds prepared** from **elapsed seconds**. Play/Pause, seeking, volume and display changes reuse unchanged audio.
 
-Sample analysis retains compact onset/energy features rather than every decoded PCM buffer. Preview mixes short windows with a temporary decode cache and headroom protection. Full-song buses and cached tempo versions still consume memory, so arbitrarily large charts can exhaust RAM.
+Sample analysis keeps compact audio features and discards decoded sample buffers after analysis. Preview mixes short windows with a temporary decode cache and headroom protection. Full-song buses and cached tempo versions still consume memory, so arbitrarily large charts can exhaust RAM.
 
 FFmpeg is external and is not bundled inside ASAR. Discovery validates FFMPEG_PATH, executable/resources locations, WinGet links and system PATH by running the executable. No unnecessary ASAR unpacking is added.
 
@@ -104,6 +105,8 @@ FFmpeg is required for non-1x preview, OGG conversion and composite overflow mix
 ~~~powershell
 winget install --id Gyan.FFmpeg -e --source winget
 ~~~
+
+**Trim quiet keysound lead-ins** scans the full sample for an attack and ignores small oscillations before it. It leaves uncertain quiet openings intact. The converted preview uses the same trim offsets as export. Exporting trims needs FFmpeg. With **Keep original format**, edited samples go to separate WAV files.
 
 At non-1x rates, song and hitsounds share the same tempo transform to retain alignment. Final composite export keeps the FFmpeg limiter.
 
@@ -121,7 +124,7 @@ npm start
 
 Build the x64 NSIS installer with **npm run dist:win**; output goes into release/. Native Electron preview validation runs with **npx electron tests/preview-electron.cjs**.
 
-The Windows workflow checks the test suites, renderer types and native Electron audio/preview behavior before building. It then checks repeated current-user installation/uninstallation before publishing. It uploads a build artifact; tags publish releases. Successful main builds update the current package-version release and its installer, including v1.0.4 polish updates.
+The Windows workflow checks the test suites, renderer types and native Electron audio/preview behavior before building. It then checks repeated current-user installation/uninstallation before publishing. It uploads a build artifact; tags publish releases. Successful builds from main update the release for the version in `package.json` and attach the verified installer.
 
 Source layout: electron/ contains dialogs, FFmpeg and file operations; renderer/ contains the interface, preview, synchronization and language switching; src/core/ contains parsers, timing, folder discovery, export and the shared language catalog. Tests live in tests/.
 

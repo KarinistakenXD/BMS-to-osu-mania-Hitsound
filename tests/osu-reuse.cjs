@@ -19,6 +19,18 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bms-osu-reuse-'));
   const next = await read(write('hard.osu', text.replace('Version: Easy', 'Version: Hard').replace('CircleSize: 4', 'CircleSize: 7').replace('500,128', '700,128')));
   assert.equal(next.reuseKey, first.reuseKey, 'same song/timing reuses analysis across difficulties');
   assert.equal(next.osuPreview.keys, 7); assert.equal(next.osuPreview.notes[0].timeMs, 700); assert.equal(next.osuPreview.notes[0].endTimeMs, 1500);
+  const named = await read(write('keysounds.osu', text.replace('1500:0:0:0:0:', '1500:0:0:0:0:hold sample.ogg')
+    + '192,192,600,1,0,0:0:0:70:samples\\arp, short.ogg\n'
+    + '320,192,700,1,0,0:0:0:70:../outside.ogg\n'
+    + '448,192,800,1,0,0:0:0:70:\n'));
+  const [hold, tap, outside, plain] = named.osuPreview.notes;
+  assert.equal(hold.sampleName, 'hold sample.ogg');
+  assert.equal(hold.samplePath, path.join(dir, 'hold sample.ogg'));
+  assert.equal(tap.sampleName, 'samples\\arp, short.ogg');
+  assert.equal(tap.samplePath, path.join(dir, 'samples', 'arp, short.ogg'));
+  assert.equal(outside.samplePath, undefined);
+  assert(!plain.sampleName);
+  assert.equal(named.reuseKey, first.reuseKey);
   for (const change of [text.replace('Title: Song', 'Title: Other'), text.replace('Artist: Artist', 'Artist: Other'), text.replace('0,500,4', '0,600,4'), text.replace('1000,-50', '1000,-25')]) {
     assert.notEqual((await read(write('changed.osu', change))).reuseKey, first.reuseKey);
   }

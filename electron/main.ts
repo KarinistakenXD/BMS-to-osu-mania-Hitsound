@@ -6,6 +6,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 
 import { setupPreferences } from "../src/core/windows-setup";
 
@@ -443,6 +444,7 @@ ipcMain.handle("preview:tempoPair", async (_e, { targetWavBytes, hitsoundWavByte
 interface SampleExportItem {
   wavId: string;
   sourcePath: string;
+  trimMs?: number;
 }
 
 interface SampleExportOptions {
@@ -465,6 +467,31 @@ async function runFfmpeg(executable: string, args: string[]): Promise<void> {
   });
 }
 
+function trimSeconds(ms: number | undefined): number {
+  if (ms === undefined) return 0;
+  if (!Number.isFinite(ms) || ms < 0) throw new Error("Invalid sample trim offset.");
+  return ms / 1000;
+}
+
+async function renderSampleFile(ffmpeg: string, args: string[], dest: string, conflict: SampleExportOptions["conflict"]): Promise<boolean> {
+  const { dir, ext } = path.parse(dest);
+  const temporary = path.join(dir, `.bms-audio-${randomUUID()}${ext}`);
+  try {
+    await runFfmpeg(ffmpeg, [...args, temporary]);
+    if (conflict === "replace") await fs.rename(temporary, dest);
+    else {
+      try { await fs.copyFile(temporary, dest, fs.constants.COPYFILE_EXCL); }
+      catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw err;
+      }
+    }
+    return true;
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
+}
+
 ipcMain.handle("core:prepareSamples", async (_e, payload: {
   osuPath: string;
   items: SampleExportItem[];
@@ -483,11 +510,12 @@ ipcMain.handle("core:prepareSamples", async (_e, payload: {
     }
 
     const outDir = path.dirname(osuPath);
-    let ffmpeg = options.convertToOgg ? await resolveFfmpeg() : null;
-    if (options.convertToOgg && !ffmpeg) {
-      ffmpeg = (await promptForFfmpeg("OGG sample export")).executable;
+    const needsFfmpeg = options.convertToOgg || items.some(item => trimSeconds(item.trimMs) > 0);
+    let ffmpeg = needsFfmpeg ? await resolveFfmpeg() : null;
+    if (needsFfmpeg && !ffmpeg) {
+      ffmpeg = (await promptForFfmpeg("sample export")).executable;
     }
-    if (options.convertToOgg && !ffmpeg) {
+    if (needsFfmpeg && !ffmpeg) {
       return { ok: false, error: `FFmpeg is required. Install it with: ${WINGET_FFMPEG_COMMAND}` };
     }
 
@@ -500,13 +528,14 @@ ipcMain.handle("core:prepareSamples", async (_e, payload: {
     for (const item of items) {
       const originalBase = path.basename(item.sourcePath);
       const parsed = path.parse(originalBase);
-      let candidate = options.convertToOgg ? `${parsed.name}.ogg` : originalBase;
+      const trim = trimSeconds(item.trimMs);
+      const stem = trim ? `${parsed.name}_bmstrim_${Math.round(trim * 1000000)}us` : parsed.name;
+      const ext = options.convertToOgg ? ".ogg" : trim ? ".wav" : parsed.ext;
+      let candidate = `${stem}${ext}`;
       const key = candidate.toLowerCase();
       const already = reserved.get(key);
       if (already && path.resolve(already) !== path.resolve(item.sourcePath)) {
-        candidate = options.convertToOgg
-          ? `${parsed.name}_WAV${item.wavId}.ogg`
-          : `${parsed.name}_WAV${item.wavId}${parsed.ext}`;
+        candidate = `${stem}_WAV${item.wavId}${ext}`;
       }
       reserved.set(candidate.toLowerCase(), item.sourcePath);
       filenames[item.wavId] = candidate;
@@ -519,13 +548,18 @@ ipcMain.handle("core:prepareSamples", async (_e, payload: {
         continue;
       }
 
-      if (options.convertToOgg) {
-        await runFfmpeg(ffmpeg!, [
-          "-hide_banner", "-loglevel", "error", "-y",
-          "-i", item.sourcePath,
-          "-vn", "-c:a", "libvorbis", "-q:a", String(quality),
-          dest,
-        ]);
+      if (options.convertToOgg || trim) {
+        if (path.resolve(item.sourcePath).toLowerCase() === path.resolve(dest).toLowerCase()) {
+          skipped++;
+          continue;
+        }
+        const args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", item.sourcePath, "-vn"];
+        if (trim) args.push("-af", `atrim=start=${trim},asetpts=PTS-STARTPTS`);
+        args.push(...(options.convertToOgg ? ["-c:a", "libvorbis", "-q:a", String(quality)] : ["-c:a", "pcm_s24le"]));
+        if (!await renderSampleFile(ffmpeg!, args, dest, options.conflict)) {
+          skipped++;
+          continue;
+        }
       } else {
         if (path.resolve(item.sourcePath) !== path.resolve(dest)) {
           await fs.copyFile(item.sourcePath, dest);
@@ -543,6 +577,7 @@ ipcMain.handle("core:prepareSamples", async (_e, payload: {
 interface CompositeSampleItem {
   key: string;
   sourcePaths: string[];
+  trimMs?: number[];
 }
 
 ipcMain.handle("core:prepareCompositeSamples", async (_e, payload: {
@@ -574,7 +609,11 @@ ipcMain.handle("core:prepareCompositeSamples", async (_e, payload: {
       if (item.sourcePaths.length < 2) continue;
       const safeKey = item.key.replace(/[^A-Za-z0-9_-]+/g, "_").slice(0, 96);
       const ext = options.convertToOgg ? ".ogg" : ".wav";
-      const filename = `bmsmix_${safeKey}${ext}`;
+      const trims = item.sourcePaths.map((_, i) => trimSeconds(item.trimMs?.[i]));
+      const trimTag = trims.some(Boolean)
+        ? `_trim_${createHash("sha256").update(JSON.stringify([item.sourcePaths, trims])).digest("hex").slice(0, 12)}`
+        : "";
+      const filename = `bmsmix_${safeKey}${trimTag}${ext}`;
       filenames[item.key] = filename;
       const dest = path.join(outDir, filename);
       let exists = false;
@@ -586,9 +625,11 @@ ipcMain.handle("core:prepareCompositeSamples", async (_e, payload: {
 
       const args: string[] = ["-hide_banner", "-loglevel", "error", "-y"];
       for (const source of item.sourcePaths) args.push("-i", source);
-      const labels = item.sourcePaths.map((_, i) => `[${i}:a]`).join("");
+      const trimFilters = trims.flatMap((seconds, i) => seconds
+        ? [`[${i}:a]atrim=start=${seconds},asetpts=PTS-STARTPTS[t${i}];`] : []).join("");
+      const labels = trims.map((seconds, i) => seconds ? `[t${i}]` : `[${i}:a]`).join("");
       args.push(
-        "-filter_complex", `${labels}amix=inputs=${item.sourcePaths.length}:duration=longest:normalize=0,alimiter=limit=0.97[a]`,
+        "-filter_complex", `${trimFilters}${labels}amix=inputs=${item.sourcePaths.length}:duration=longest:normalize=0,alimiter=limit=0.97:latency=1[a]`,
         "-map", "[a]", "-vn",
       );
       if (options.convertToOgg) {
@@ -598,9 +639,8 @@ ipcMain.handle("core:prepareCompositeSamples", async (_e, payload: {
         // used as the lossless composite fallback.
         args.push("-c:a", "pcm_s16le");
       }
-      args.push(dest);
-      await runFfmpeg(ffmpeg, args);
-      exported++;
+      if (await renderSampleFile(ffmpeg, args, dest, options.conflict)) exported++;
+      else skipped++;
     }
 
     return {

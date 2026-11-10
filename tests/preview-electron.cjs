@@ -141,6 +141,7 @@ app.whenReady().then(async () => {
           if (document.documentElement.lang !== (locale === 'zh' ? 'zh-CN' : locale)) throw new Error('Language did not change');
           if (!previewPlaying || targetSource !== languageSource || previewStartedAt !== languageClock || preparationGeneration !== languageGeneration) throw new Error('Language change rebuilt or stopped playback');
           if (logEl.textContent !== rawLog || option.textContent !== 'Original 7K · artist title' || option.value !== '/fixture.osu') throw new Error('Language changed diagnostics or chart metadata');
+          if (locale !== 'en' && trimSamples.labels[0].textContent.includes('Trim quiet keysound lead-ins')) throw new Error('Trim control not translated');
           if (locale !== 'en' && document.getElementById('btn-convert').textContent === 'Convert difficulty + export samples') throw new Error('Export control not translated');
           btnPlay.title = 'Pause preview';
           await new Promise(resolve => setTimeout(resolve, 0));
@@ -154,6 +155,37 @@ app.whenReady().then(async () => {
           if (locale !== 'en' && /^(Original|Target|Converted)/.test(notePreviewInfo.textContent)) throw new Error('Paused chart summary was not translated');
           if (previewPlaying || preparationGeneration !== languageGeneration) throw new Error('Paused language change touched audio');
         }
+        if (trimSamples.checked) throw new Error('Trimming must be opt-in');
+        const delayed = audioCtx.createBuffer(1, sample.length, sample.sampleRate);
+        delayed.getChannelData(0).fill(.2, Math.round(sample.sampleRate * .02));
+        state.audioBuffers.set('01', { ...analyseBuffer(delayed), leadingTrimMs: leadingTrimMs(delayed) });
+        window.bms2osu.readAudioFile = async () => audioBufferToWavBytes(delayed);
+        trimSamples.click();
+        const trimmed = (await preparePreview('keys-only', 1)).mixPreview;
+        const original = await previewMixBuffer('bms-reference');
+        const frame = Math.round(.505 * sample.sampleRate);
+        if (!trimSamples.checked || trimmed.getChannelData(0)[frame] < .1 || original.getChannelData(0)[frame] !== 0) throw new Error('Trim toggle did not advance converted audio only');
+        await warmPreview();
+        $("view-sv").checked = false;
+        const inspectAt = 500;
+        state.targetNotes = [{ timeMs: inspectAt, endTimeMs: 800, lane: 1,
+          sampleName: 'Stargazer sample.ogg', samplePath: 'fixture.ogg' }];
+        notePreviewMode.value = 'target';
+        setPosition(.4);
+        const drawn = visibleNoteHits.find(hit => hit.note.timeMs === inspectAt);
+        if (!drawn?.body) throw new Error('Visible hold is not inspectable');
+        const canvas = noteCanvas.getBoundingClientRect();
+        noteCanvas.dispatchEvent(new MouseEvent('click', {
+          clientX: canvas.left + drawn.head.x + drawn.head.width / 2,
+          clientY: canvas.top + drawn.head.y + drawn.head.height / 2,
+        }));
+        for (let i = 0; i < 40 && !auditionSources.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
+        if (document.getElementById('note-sample-names').textContent !== 'Stargazer sample.ogg' ||
+          !auditionSources[0]?.buffer) throw new Error('Click did not identify and play the custom sample');
+        noteCanvas.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',bubbles:true}));
+        if (selectedNoteHit || auditionSources.length) throw new Error('Escape did not clear the note and stop audio');
+        noteCanvas.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true}));
+        if (!selectedNoteHit || auditionSources.length) throw new Error('Keyboard could not select a visible note silently');
         return { playMs, resumeMs, sharedClock: clock > 0, busFrames: bus.length };
       };
     `;
@@ -177,7 +209,7 @@ app.whenReady().then(async () => {
     assert((await settingsWindow.webContents.executeJavaScript('document.getElementById("osu-default-folder").textContent')).includes('C:/fixture/osu!/Songs'));
     settingsWindow.destroy();
     console.log('PASS: first-launch installer language, saved app language priority, and discovered Songs folder');
-    console.log('PASS: Windows Electron prepare, key changes during preparation/ready/playback, Play, resume, and cancellation', JSON.stringify(result));
+    console.log('PASS: Windows Electron prepare, key changes during preparation/ready/playback, Play, resume, cancellation, converted-only trim, and note sample inspection', JSON.stringify(result));
     app.exit(0);
   } catch (error) { console.error(error); app.exit(1); }
 });

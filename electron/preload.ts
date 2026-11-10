@@ -28,7 +28,7 @@ const api = {
     ipcRenderer.invoke("preview:tempoPair", { targetWavBytes, hitsoundWavBytes, rate }),
   prepareSamples: (
     osuPath: string,
-    items: Array<{ wavId: string; sourcePath: string }>,
+    items: Array<{ wavId: string; sourcePath: string; trimMs?: number }>,
     options: {
       enabled: boolean;
       convertToOgg: boolean;
@@ -38,7 +38,7 @@ const api = {
   ) => ipcRenderer.invoke("core:prepareSamples", { osuPath, items, options }),
   prepareCompositeSamples: (
     osuPath: string,
-    items: Array<{ key: string; sourcePaths: string[] }>,
+    items: Array<{ key: string; sourcePaths: string[]; trimMs?: number[] }>,
     options: { enabled: boolean; convertToOgg: boolean; oggQuality: number; conflict: "replace" | "skip" },
   ) => ipcRenderer.invoke("core:prepareCompositeSamples", { osuPath, items, options }),
   writeOsuFile: (osuPath: string, hitObjects: string[], keys: number, removeStoryboardSampleNames: string[] = []) =>

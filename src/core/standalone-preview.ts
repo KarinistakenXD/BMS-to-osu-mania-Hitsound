@@ -28,7 +28,7 @@ export async function readStandaloneChart(filePath: string, kind: "bms" | "osu")
   };
   const notes = visible.map(n => ({ timeMs: timing.toMs(n.measure, n.position),
     endTimeMs: n.end ? timing.toMs(n.end.measure, n.end.position) : timing.toMs(n.measure, n.position),
-    lane: laneFor(n.channel) })).filter(n => n.lane >= 0).sort((a, b) => a.timeMs - b.timeMs);
+    lane: laneFor(n.channel), wavId: n.value, sampleName: chart.header.wav.get(n.value) })).filter(n => n.lane >= 0).sort((a, b) => a.timeMs - b.timeMs);
   const keys = pms ? 9 : sideKeys * (hasDP ? 2 : 1);
   const files: Record<string, string> = {};
   const usedIds = new Set(chart.notes.map(n => n.value));
